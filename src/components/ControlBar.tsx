@@ -44,6 +44,21 @@ export default function ControlBar({
       <button type="button" disabled={!canGoNext} onClick={onNext}>
         ▶ Next Song
       </button>
+
+      <div className="keyboard-help" aria-label="Keyboard shortcuts">
+        <span>
+          <kbd>←</kbd> Previous
+        </span>
+        <span>
+          <kbd>→</kbd> Next
+        </span>
+        <span>
+          <kbd>Space</kbd> Play/Pause
+        </span>
+        <span>
+          <kbd>F</kbd> Fullscreen
+        </span>
+      </div>
     </footer>
   );
 }

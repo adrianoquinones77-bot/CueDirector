@@ -26,6 +26,10 @@ function getStatusIcon(status: SongStatus): string {
   }
 }
 
+function formatSongLabel(index: number, title: string): string {
+  return `${String(index + 1).padStart(2, "0")} ${title}`;
+}
+
 export default function PlaylistPanel({
   songs,
   activeIndex,
@@ -63,7 +67,13 @@ export default function PlaylistPanel({
                   <span className="playlist-item__icon" aria-hidden="true">
                     {getStatusIcon(status)}
                   </span>
-                  <span className="playlist-item__title">{song.title}</span>
+                  <span className="playlist-item__title">
+                    {formatSongLabel(index, song.title)}
+                  </span>
+                  <span className="playlist-item__cue-count">
+                    {song.cues.length}{" "}
+                    {song.cues.length === 1 ? "cue" : "cues"}
+                  </span>
                 </button>
               </li>
             );

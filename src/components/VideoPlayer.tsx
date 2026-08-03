@@ -1,9 +1,16 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
 } from "react";
+import {
+  SEEK_COOLDOWN_MS,
+  applyVideoSeek,
+  clampVideoTime,
+  isVideoSeekReady,
+} from "../utils/safeVideoSeek";
 
 export interface VideoPlayerHandle {
   togglePlayPause: () => void;
@@ -12,6 +19,7 @@ export interface VideoPlayerHandle {
   getCurrentTime: () => number;
   getDuration: () => number;
   seekTo: (time: number) => void;
+  scrubTo: (time: number) => void;
   pause: () => void;
 }
 
@@ -21,17 +29,104 @@ interface VideoPlayerProps {
   onEnded?: () => void;
 }
 
+interface PendingSeek {
+  time: number;
+  resumePlayback: boolean;
+}
+
 const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   function VideoPlayer({ src, onTimeUpdate, onEnded }, ref) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLElement>(null);
+    const instanceIdRef = useRef(Math.random().toString(36).slice(2, 8));
+    const seekInProgressRef = useRef(false);
+    const lastSeekAtRef = useRef(0);
+    const pendingSeekRef = useRef<PendingSeek | null>(null);
+    const seekClearTimeoutRef = useRef<number | null>(null);
+    const srcRef = useRef(src);
+    srcRef.current = src;
+
+    const releaseSeekLock = useCallback(() => {
+      seekInProgressRef.current = false;
+
+      if (seekClearTimeoutRef.current !== null) {
+        window.clearTimeout(seekClearTimeoutRef.current);
+        seekClearTimeoutRef.current = null;
+      }
+    }, []);
+
+    const queuePendingSeek = useCallback(
+      (time: number, resumePlayback: boolean) => {
+        const existing = pendingSeekRef.current;
+        pendingSeekRef.current = {
+          time,
+          resumePlayback: resumePlayback || (existing?.resumePlayback ?? false),
+        };
+      },
+      [],
+    );
+
+    const performSeek = useCallback(
+      (video: HTMLVideoElement, time: number, resumePlayback?: boolean) => {
+        if (!srcRef.current) return;
+
+        const shouldResume = resumePlayback ?? !video.paused;
+
+        if (seekInProgressRef.current) {
+          queuePendingSeek(time, shouldResume);
+          return;
+        }
+
+        const now = Date.now();
+        if (now - lastSeekAtRef.current < SEEK_COOLDOWN_MS) {
+          queuePendingSeek(time, shouldResume);
+          return;
+        }
+
+        if (!isVideoSeekReady(video)) {
+          return;
+        }
+
+        const applied = applyVideoSeek(video, time);
+        if (applied === null) {
+          return;
+        }
+
+        seekInProgressRef.current = true;
+        lastSeekAtRef.current = now;
+        onTimeUpdate(applied);
+
+        const finalizeSeek = () => {
+          releaseSeekLock();
+
+          if (shouldResume) {
+            void video.play().catch(() => {});
+          }
+
+          const pending = pendingSeekRef.current;
+          pendingSeekRef.current = null;
+
+          if (pending && videoRef.current) {
+            performSeek(
+              videoRef.current,
+              pending.time,
+              pending.resumePlayback,
+            );
+          }
+        };
+
+        video.addEventListener("seeked", finalizeSeek, { once: true });
+        seekClearTimeoutRef.current = window.setTimeout(finalizeSeek, 300);
+      },
+      [onTimeUpdate, queuePendingSeek, releaseSeekLock],
+    );
 
     useImperativeHandle(
       ref,
       () => ({
         togglePlayPause() {
           const video = videoRef.current;
-          if (!video || !src) return;
+          if (!video || !srcRef.current) return;
 
           if (video.paused) {
             void video.play();
@@ -55,7 +150,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           }
         },
         getCurrentTime() {
-          return videoRef.current?.currentTime ?? 0;
+          const video = videoRef.current;
+          if (!video) return 0;
+          return clampVideoTime(video, video.currentTime);
         },
         getDuration() {
           const videoDuration = videoRef.current?.duration ?? 0;
@@ -63,25 +160,75 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         },
         seekTo(time: number) {
           const video = videoRef.current;
-          if (!video || !src) return;
+          if (!video || !srcRef.current) return;
+          performSeek(video, time);
+        },
+        scrubTo(time: number) {
+          const video = videoRef.current;
+          if (!video || !srcRef.current) return;
 
-          video.currentTime = time;
-          onTimeUpdate(time);
+          const applied = applyVideoSeek(video, time);
+          if (applied !== null) {
+            onTimeUpdate(applied);
+          }
         },
         pause() {
           videoRef.current?.pause();
         },
       }),
-      [src, onTimeUpdate],
+      [performSeek, onTimeUpdate],
     );
 
     useEffect(() => {
       const video = videoRef.current;
       if (!video || !src) return;
 
+      console.log("[VideoPlayer] src changed", {
+        instanceId: instanceIdRef.current,
+        src,
+      });
+
+      let cancelled = false;
+      releaseSeekLock();
+      pendingSeekRef.current = null;
       video.load();
-      video.currentTime = 0;
-    }, [src]);
+
+      const resetToStart = () => {
+        if (cancelled) return;
+
+        const applied = applyVideoSeek(video, 0);
+        if (applied !== null) {
+          onTimeUpdate(applied);
+        }
+      };
+
+      if (isVideoSeekReady(video)) {
+        resetToStart();
+      } else {
+        video.addEventListener("loadedmetadata", resetToStart, { once: true });
+      }
+
+      return () => {
+        cancelled = true;
+        video.removeEventListener("loadedmetadata", resetToStart);
+        releaseSeekLock();
+        pendingSeekRef.current = null;
+      };
+    }, [src, onTimeUpdate, releaseSeekLock]);
+
+    useEffect(() => {
+      console.log("[VideoPlayer] mounted", {
+        instanceId: instanceIdRef.current,
+      });
+
+      return () => {
+        console.log("[VideoPlayer] unmounted", {
+          instanceId: instanceIdRef.current,
+        });
+        releaseSeekLock();
+        pendingSeekRef.current = null;
+      };
+    }, [releaseSeekLock]);
 
     return (
       <section className="video-panel" ref={containerRef}>
@@ -92,7 +239,12 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             controls
             onTimeUpdate={() => {
               if (videoRef.current) {
-                onTimeUpdate(videoRef.current.currentTime);
+                onTimeUpdate(
+                  clampVideoTime(
+                    videoRef.current,
+                    videoRef.current.currentTime,
+                  ),
+                );
               }
             }}
             onEnded={() => onEnded?.()}

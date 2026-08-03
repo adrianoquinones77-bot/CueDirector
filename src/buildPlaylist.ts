@@ -1,42 +1,29 @@
-import { parseCueCsv } from "./parseCueCsv";
+import {
+  getMediaBaseName,
+  indexMediaFilesByBaseName,
+  loadSongCues,
+} from "./cueFile/loadSongCues";
 import type { Song } from "./types/song";
-
-function getBaseName(filename: string): string {
-  return filename.replace(/\.[^.]+$/, "");
-}
 
 function formatSongTitle(baseName: string): string {
   return baseName.replace(/^\d+\s*/, "").trim() || baseName;
 }
 
 export async function buildPlaylistFromFiles(files: FileList | File[]): Promise<Song[]> {
-  const pairs = new Map<string, { video?: File; csv?: File }>();
-
-  for (const file of Array.from(files)) {
-    const extension = file.name.split(".").pop()?.toLowerCase();
-    const baseName = getBaseName(file.name);
-    const entry = pairs.get(baseName) ?? {};
-
-    if (extension === "mp4" || file.type.startsWith("video/")) {
-      entry.video = file;
-    } else if (extension === "csv") {
-      entry.csv = file;
-    }
-
-    pairs.set(baseName, entry);
-  }
-
+  const { videos, csvs, cues: cuesByBaseName } = indexMediaFilesByBaseName(files);
   const songs: Song[] = [];
 
-  for (const [baseName, { video, csv }] of pairs) {
-    if (!video || !csv) continue;
-
-    const cues = parseCueCsv(await csv.text());
-    if (cues.length === 0) continue;
+  for (const [baseNameKey, video] of videos) {
+    const baseName = getMediaBaseName(video.name);
+    const cues = await loadSongCues({
+      csvFile: csvs.get(baseNameKey),
+      cuesFile: cuesByBaseName.get(baseNameKey),
+    });
 
     songs.push({
       id: baseName,
       title: formatSongTitle(baseName),
+      videoFilename: video.name,
       videoUrl: URL.createObjectURL(video),
       cues,
     });

@@ -1,4 +1,5 @@
 import type { Cue } from "../types/cue";
+import { isCueActive } from "./cueTiming";
 
 export interface CueWindow {
   current?: Cue;
@@ -6,18 +7,22 @@ export interface CueWindow {
   then?: Cue;
 }
 
-export function getCueWindow(cues: Cue[], currentTime: number): CueWindow {
-  const currentIndex = cues.findIndex((cue, index) => {
-    const nextCue = cues[index + 1];
+export function getCueWindow(
+  cues: Cue[],
+  currentTime: number,
+  defaultCueDuration: number,
+): CueWindow {
+  const currentIndex = cues.findIndex((cue) =>
+    isCueActive(cue, currentTime, defaultCueDuration),
+  );
+  const current = currentIndex >= 0 ? cues[currentIndex] : undefined;
 
-    if (!nextCue) return currentTime >= cue.time;
+  const next = current
+    ? cues[currentIndex + 1]
+    : cues.find((cue) => cue.time > currentTime);
 
-    return currentTime >= cue.time && currentTime < nextCue.time;
-  });
+  const nextIndex = next ? cues.indexOf(next) : -1;
+  const then = nextIndex >= 0 ? cues[nextIndex + 1] : undefined;
 
-  return {
-    current: cues[currentIndex],
-    next: cues[currentIndex + 1],
-    then: cues[currentIndex + 2],
-  };
+  return { current, next, then };
 }

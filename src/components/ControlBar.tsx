@@ -1,6 +1,10 @@
 import { type ChangeEvent, useRef } from "react";
+import type { ShortcutHandlers } from "../keyboard/shortcuts";
+import { supportsMediaDirectoryPicker } from "../media/loadMediaDirectory";
+import KeyboardShortcutsGuide from "./KeyboardShortcutsGuide";
 
 interface ControlBarProps {
+  onLoadShowDirectory: () => Promise<void>;
   onLoadShow: (event: ChangeEvent<HTMLInputElement>) => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -10,9 +14,21 @@ interface ControlBarProps {
   onToggleAutoAdvance: () => void;
   directorMode: boolean;
   onToggleDirectorMode: () => void;
+  editorMode: boolean;
+  onToggleEditorMode: () => void;
+  onAddCue: () => void;
+  canAddCue: boolean;
+  onSaveCues: () => void;
+  canSaveCues: boolean;
+  defaultCueDuration: number;
+  onDefaultCueDurationChange: (value: number) => void;
+  shortcutHandlers: ShortcutHandlers;
+  shortcutsOpen: boolean;
+  onToggleShortcuts: () => void;
 }
 
 export default function ControlBar({
+  onLoadShowDirectory,
   onLoadShow,
   onPrevious,
   onNext,
@@ -22,6 +38,17 @@ export default function ControlBar({
   onToggleAutoAdvance,
   directorMode,
   onToggleDirectorMode,
+  editorMode,
+  onToggleEditorMode,
+  onAddCue,
+  canAddCue,
+  onSaveCues,
+  canSaveCues,
+  defaultCueDuration,
+  onDefaultCueDurationChange,
+  shortcutHandlers,
+  shortcutsOpen,
+  onToggleShortcuts,
 }: ControlBarProps) {
   const showInputRef = useRef<HTMLInputElement>(null);
 
@@ -30,21 +57,32 @@ export default function ControlBar({
     event.target.value = "";
   };
 
+  const handleLoadShowClick = async () => {
+    if (supportsMediaDirectoryPicker()) {
+      await onLoadShowDirectory();
+      return;
+    }
+
+    showInputRef.current?.click();
+  };
+
   return (
     <footer className="footer">
       <input
         ref={showInputRef}
         type="file"
-        multiple
-        accept=".mp4,.csv,video/mp4,text/csv"
         style={{ display: "none" }}
+        // @ts-expect-error webkitdirectory is supported in Chromium/Safari
+        webkitdirectory=""
+        directory=""
+        multiple
         onChange={handleLoadShow}
       />
 
       <button
         type="button"
         disabled={directorMode}
-        onClick={() => showInputRef.current?.click()}
+        onClick={handleLoadShowClick}
       >
         Load Show
       </button>
@@ -73,20 +111,60 @@ export default function ControlBar({
         Director Mode: {directorMode ? "ON" : "OFF"}
       </button>
 
-      <div className="keyboard-help" aria-label="Keyboard shortcuts">
-        <span>
-          <kbd>←</kbd> Previous
-        </span>
-        <span>
-          <kbd>→</kbd> Next
-        </span>
-        <span>
-          <kbd>Space</kbd> Play/Pause
-        </span>
-        <span>
-          <kbd>F</kbd> Fullscreen
-        </span>
-      </div>
+      <button
+        type="button"
+        className={`footer-toggle${editorMode ? " footer-toggle--on" : ""}`}
+        onClick={onToggleEditorMode}
+      >
+        Editor Mode: {editorMode ? "ON" : "OFF"}
+      </button>
+
+      {editorMode && (
+        <button
+          type="button"
+          className="footer-add-cue"
+          disabled={!canAddCue}
+          onClick={onAddCue}
+        >
+          Add Cue
+        </button>
+      )}
+
+      {editorMode && (
+        <button
+          type="button"
+          className="footer-save-cues"
+          disabled={directorMode || !canSaveCues}
+          onClick={() => void onSaveCues()}
+        >
+          Save Cues
+        </button>
+      )}
+
+      <label className="footer-duration">
+        <span className="footer-duration__label">Default Cue Duration</span>
+        <input
+          type="number"
+          className="footer-duration__input"
+          min={1}
+          step={1}
+          value={defaultCueDuration}
+          disabled={directorMode}
+          onChange={(event) => {
+            const value = Number(event.target.value);
+            if (!Number.isNaN(value) && value > 0) {
+              onDefaultCueDurationChange(value);
+            }
+          }}
+        />
+        <span className="footer-duration__unit">s</span>
+      </label>
+
+      <KeyboardShortcutsGuide
+        handlers={shortcutHandlers}
+        open={shortcutsOpen}
+        onToggle={onToggleShortcuts}
+      />
     </footer>
   );
 }

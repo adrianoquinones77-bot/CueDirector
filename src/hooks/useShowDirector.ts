@@ -9,6 +9,8 @@ export function useShowDirector() {
   const [cues, setCues] = useState<Cue[]>(demoCues);
   const [playlist, setPlaylist] = useState<Song[]>([]);
   const [activeSongIndex, setActiveSongIndex] = useState(-1);
+  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [directorMode, setDirectorMode] = useState(false);
 
   const activeSong = activeSongIndex >= 0 ? playlist[activeSongIndex] : undefined;
 
@@ -62,17 +64,31 @@ export function useShowDirector() {
     setCurrentTime(time);
   }, []);
 
+  const advanceOnVideoEnd = useCallback(() => {
+    if (!autoAdvance) return false;
+    if (activeSongIndex >= 0 && activeSongIndex < playlist.length - 1) {
+      selectSong(activeSongIndex + 1);
+      return true;
+    }
+    return false;
+  }, [autoAdvance, activeSongIndex, playlist.length, selectSong]);
+
   return {
     currentTime,
     cues,
     playlist,
     activeSongIndex,
     activeVideoSrc: activeSong?.videoUrl,
+    autoAdvance,
+    setAutoAdvance,
+    directorMode,
+    setDirectorMode,
     selectSong,
     loadShow,
     goToPreviousSong,
     goToNextSong,
     handleTimeUpdate,
+    advanceOnVideoEnd,
     canGoPrevious: activeSongIndex > 0,
     canGoNext: activeSongIndex >= 0 && activeSongIndex < playlist.length - 1,
   };

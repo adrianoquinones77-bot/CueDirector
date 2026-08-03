@@ -2,6 +2,7 @@ import { useCallback, useRef } from "react";
 import "./App.css";
 import ControlBar from "./components/ControlBar";
 import CuePanel from "./components/CuePanel";
+import CueTimeline from "./components/CueTimeline";
 import Header from "./components/Header";
 import PlaylistPanel from "./components/PlaylistPanel";
 import VideoPlayer, {
@@ -24,6 +25,11 @@ function App() {
     goToPreviousSong,
     goToNextSong,
     handleTimeUpdate,
+    advanceOnVideoEnd,
+    autoAdvance,
+    setAutoAdvance,
+    directorMode,
+    setDirectorMode,
     canGoPrevious,
     canGoNext,
   } = useShowDirector();
@@ -40,6 +46,17 @@ function App() {
     videoPlayerRef.current?.exitFullscreen();
   }, []);
 
+  const handleCueSeek = useCallback((time: number) => {
+    videoPlayerRef.current?.seekTo(time);
+  }, []);
+
+  const handleVideoEnded = useCallback(() => {
+    const advanced = advanceOnVideoEnd();
+    if (advanced) {
+      videoPlayerRef.current?.pause();
+    }
+  }, [advanceOnVideoEnd]);
+
   useKeyboardShortcuts({
     onPlayPause: handlePlayPause,
     onPrevious: goToPreviousSong,
@@ -55,25 +72,36 @@ function App() {
   });
   return (
     <div className="app">
-      <Header currentTime={currentTime} />
+      <Header currentTime={currentTime} directorMode={directorMode} />
 
       <main className="content">
         <PlaylistPanel
           songs={playlist}
           activeIndex={activeSongIndex}
           onSelect={selectSong}
+          directorMode={directorMode}
         />
 
         <VideoPlayer
           ref={videoPlayerRef}
           src={activeVideoSrc}
-          cues={cues}
-          currentTime={currentTime}
           onTimeUpdate={handleTimeUpdate}
+          onEnded={handleVideoEnded}
         />
 
-        <CuePanel currentTime={currentTime} cues={cues} />
+        <CuePanel
+          currentTime={currentTime}
+          cues={cues}
+          onCueSeek={handleCueSeek}
+          directorMode={directorMode}
+        />
       </main>
+
+      <CueTimeline
+        cues={cues}
+        currentTime={currentTime}
+        videoPlayerRef={videoPlayerRef}
+      />
 
       <ControlBar
         onLoadShow={loadShow}
@@ -81,6 +109,10 @@ function App() {
         onNext={goToNextSong}
         canGoPrevious={canGoPrevious}
         canGoNext={canGoNext}
+        autoAdvance={autoAdvance}
+        onToggleAutoAdvance={() => setAutoAdvance((value) => !value)}
+        directorMode={directorMode}
+        onToggleDirectorMode={() => setDirectorMode((value) => !value)}
       />
     </div>
   );

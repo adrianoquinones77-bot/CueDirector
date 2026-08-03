@@ -2,6 +2,13 @@ import { app, BrowserWindow, shell } from "electron";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import {
+  installMediaProtocolHandler,
+  registerMediaScheme,
+} from "./mediaProtocol";
+import { registerDialogIpc, registerSessionIpc } from "./sessionIpc";
+
+registerMediaScheme();
 
 const DEV_SERVER_URL =
   process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
@@ -47,6 +54,7 @@ const MIME_TYPES: Record<string, string> = {
   ".mov": "video/quicktime",
   ".cues": "text/plain; charset=utf-8",
   ".csv": "text/csv; charset=utf-8",
+  ".show": "application/json",
   ".cuedirector": "application/json",
 };
 
@@ -101,6 +109,9 @@ async function loadProductionApp(window: BrowserWindow): Promise<void> {
 }
 
 async function createWindow(): Promise<void> {
+  registerSessionIpc();
+  registerDialogIpc();
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -113,6 +124,7 @@ async function createWindow(): Promise<void> {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: path.join(__dirname, "preload.cjs"),
     },
   });
 
@@ -140,6 +152,7 @@ function stopStaticServer(): void {
 }
 
 app.whenReady().then(() => {
+  installMediaProtocolHandler();
   void createWindow();
 });
 

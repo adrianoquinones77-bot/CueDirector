@@ -1,10 +1,12 @@
 import type { Cue } from "../types/cue";
 import {
-  CUE_DIRECTOR_FORMAT,
-  CUE_DIRECTOR_VERSION,
+  isSupportedShowFileFormat,
+  SHOW_FILE_FORMAT,
+  SHOW_FILE_VERSION,
   type CueDirectorFile,
   type CueDirectorPreferences,
   type CueDirectorSong,
+  type ShowTimelineSettings,
 } from "../types/cueDirectorFile";
 import type { ShowInfo } from "../types/showInfo";
 import { DEFAULT_CUE_DURATION } from "../utils/cueTiming";
@@ -46,6 +48,17 @@ function parsePreferences(value: unknown): CueDirectorPreferences {
   };
 }
 
+function parseTimeline(value: unknown): ShowTimelineSettings {
+  if (!isRecord(value)) {
+    return { zoom: 1 };
+  }
+
+  const zoom =
+    typeof value.zoom === "number" && value.zoom > 0 ? value.zoom : 1;
+
+  return { zoom };
+}
+
 function parseCue(value: unknown): Cue | null {
   if (!isRecord(value)) return null;
 
@@ -85,6 +98,10 @@ function parseSong(value: unknown): CueDirectorSong | null {
   const title = typeof value.title === "string" ? value.title : "";
   const videoFilename =
     typeof value.videoFilename === "string" ? value.videoFilename : "";
+  const videoRelativePath =
+    typeof value.videoRelativePath === "string"
+      ? value.videoRelativePath.replace(/\\/g, "/")
+      : undefined;
 
   if (!id || !title || !videoFilename) return null;
 
@@ -96,7 +113,13 @@ function parseSong(value: unknown): CueDirectorSong | null {
     }
   }
 
-  return { id, title, videoFilename, cues };
+  return {
+    id,
+    title,
+    videoFilename,
+    videoRelativePath,
+    cues,
+  };
 }
 
 export function parseCueDirectorFile(content: string): CueDirectorFile {
@@ -112,13 +135,13 @@ export function parseCueDirectorFile(content: string): CueDirectorFile {
     throw new Error("Invalid show file: expected an object");
   }
 
-  if (parsed.format !== CUE_DIRECTOR_FORMAT) {
+  if (!isSupportedShowFileFormat(parsed.format)) {
     throw new Error("Invalid show file: unsupported format");
   }
 
   if (
     typeof parsed.version !== "number" ||
-    parsed.version > CUE_DIRECTOR_VERSION
+    parsed.version > SHOW_FILE_VERSION
   ) {
     throw new Error("Invalid show file: unsupported version");
   }
@@ -134,10 +157,18 @@ export function parseCueDirectorFile(content: string): CueDirectorFile {
   }
 
   return {
-    format: CUE_DIRECTOR_FORMAT,
-    version: CUE_DIRECTOR_VERSION,
+    format: SHOW_FILE_FORMAT,
+    version: SHOW_FILE_VERSION,
     showInfo: parseShowInfo(parsed.showInfo),
     preferences: parsePreferences(parsed.preferences),
+    timeline: parseTimeline(parsed.timeline),
+    mediaDirectoryPath:
+      typeof parsed.mediaDirectoryPath === "string"
+        ? parsed.mediaDirectoryPath
+        : undefined,
     playlist,
   };
 }
+
+/** @alias parseCueDirectorFile */
+export const parseShowFile = parseCueDirectorFile;

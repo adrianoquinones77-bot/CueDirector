@@ -37,7 +37,7 @@ function getCueRailWidthBounds(
   return { min, max };
 }
 
-/** Keep cue sheet within 280–500px; NOW/director keeps priority when space is tight. */
+/** Keep cue sheet within 420–960px; NOW/director keeps priority when space is tight. */
 export function clampDirectorWidth(
   cueRailWidth: number,
   directorWidth: number,

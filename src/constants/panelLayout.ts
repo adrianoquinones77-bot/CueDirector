@@ -1,8 +1,8 @@
-/** Default panel widths — NOW/NEXT prioritized (~30% / ~21% of 1800px cue rail). */
+/** Default panel widths — cue sheet gets the majority of the cue rail. */
 export const DEFAULT_PANEL_LAYOUT = {
   playlistWidth: 270,
-  cueRailWidth: 920,
-  directorWidth: 540,
+  cueRailWidth: 1180,
+  directorWidth: 400,
 } as const;
 
 export const PANEL_LAYOUT_STORAGE_KEY = "cuedirector-panel-layout";
@@ -15,8 +15,8 @@ export const CUE_RAIL_SPLIT_STORAGE_KEY = "cuedirector-cue-rail-split";
 
 export const PANEL_LIMITS = {
   playlist: { min: 180, max: 320, default: DEFAULT_PANEL_LAYOUT.playlistWidth },
-  cueSheet: { min: 300, max: 520 },
-  director: { min: 380, default: DEFAULT_PANEL_LAYOUT.directorWidth },
+  cueSheet: { min: 420, max: 960 },
+  director: { min: 300, default: DEFAULT_PANEL_LAYOUT.directorWidth },
   mainMin: 240,
   cueRail: { default: DEFAULT_PANEL_LAYOUT.cueRailWidth },
 } as const;

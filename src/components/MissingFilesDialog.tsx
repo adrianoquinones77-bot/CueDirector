@@ -1,10 +1,14 @@
 interface MissingFilesDialogProps {
   files: string[];
+  isRelinking?: boolean;
+  onRelink: () => void | Promise<void>;
   onClose: () => void;
 }
 
 export default function MissingFilesDialog({
   files,
+  isRelinking = false,
+  onRelink,
   onClose,
 }: MissingFilesDialogProps) {
   if (files.length === 0) return null;
@@ -30,9 +34,25 @@ export default function MissingFilesDialog({
             <li key={filename}>{filename}</li>
           ))}
         </ul>
-        <button type="button" className="dialog__button" onClick={onClose}>
-          OK
-        </button>
+        <div className="dialog__actions">
+          <button
+            type="button"
+            className="dialog__button dialog__button--secondary"
+            disabled={isRelinking}
+            onClick={() => void onRelink()}
+          >
+            {isRelinking ? "Searching…" : "Relink Media Folder"}
+          </button>
+          <div className="dialog__actions-spacer" />
+          <button
+            type="button"
+            className="dialog__button"
+            disabled={isRelinking}
+            onClick={onClose}
+          >
+            OK
+          </button>
+        </div>
       </div>
     </div>
   );

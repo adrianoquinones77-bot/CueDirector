@@ -26,6 +26,7 @@ export interface VideoPlayerHandle {
 interface VideoPlayerProps {
   src?: string;
   onTimeUpdate: (time: number) => void;
+  onDurationChange?: (duration: number) => void;
   onEnded?: () => void;
 }
 
@@ -35,7 +36,7 @@ interface PendingSeek {
 }
 
 const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
-  function VideoPlayer({ src, onTimeUpdate, onEnded }, ref) {
+  function VideoPlayer({ src, onTimeUpdate, onDurationChange, onEnded }, ref) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLElement>(null);
     const seekInProgressRef = useRef(false);
@@ -44,6 +45,15 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const seekClearTimeoutRef = useRef<number | null>(null);
     const srcRef = useRef(src);
     srcRef.current = src;
+    const onDurationChangeRef = useRef(onDurationChange);
+    onDurationChangeRef.current = onDurationChange;
+
+    const notifyDuration = useCallback((video: HTMLVideoElement) => {
+      const nextDuration = video.duration;
+      if (Number.isFinite(nextDuration) && nextDuration > 0) {
+        onDurationChangeRef.current?.(nextDuration);
+      }
+    }, []);
 
     const releaseSeekLock = useCallback(() => {
       seekInProgressRef.current = false;
@@ -182,6 +192,8 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       const video = videoRef.current;
       if (!video || !src) return;
 
+      console.log("[CueDirector media] VideoPlayer assigning src", { src });
+
       let cancelled = false;
       releaseSeekLock();
       pendingSeekRef.current = null;
@@ -189,6 +201,8 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
       const resetToStart = () => {
         if (cancelled) return;
+
+        notifyDuration(video);
 
         const applied = applyVideoSeek(video, 0);
         if (applied !== null) {
@@ -202,13 +216,17 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         video.addEventListener("loadedmetadata", resetToStart, { once: true });
       }
 
+      const handleDurationChange = () => notifyDuration(video);
+      video.addEventListener("durationchange", handleDurationChange);
+
       return () => {
         cancelled = true;
         video.removeEventListener("loadedmetadata", resetToStart);
+        video.removeEventListener("durationchange", handleDurationChange);
         releaseSeekLock();
         pendingSeekRef.current = null;
       };
-    }, [src, onTimeUpdate, releaseSeekLock]);
+    }, [src, onTimeUpdate, notifyDuration, releaseSeekLock]);
 
     return (
       <section className="video-panel" ref={containerRef}>
@@ -228,6 +246,14 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
               }
             }}
             onEnded={() => onEnded?.()}
+            onError={() => {
+              console.error("[CueDirector media] VideoPlayer load error", {
+                src,
+                networkState: videoRef.current?.networkState,
+                readyState: videoRef.current?.readyState,
+                error: videoRef.current?.error?.code,
+              });
+            }}
             style={{
               width: "100%",
               height: "100%",

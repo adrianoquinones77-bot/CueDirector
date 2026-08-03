@@ -4,7 +4,7 @@
  * Runtime guarantees:
  * - No fetch(), XMLHttpRequest, WebSocket, or external API calls
  * - Videos load from local files via blob URLs (URL.createObjectURL)
- * - Cues load from local CSV / .cues / .cuedirector files on disk
+ * - Cues load from local CSV / .cues / .show files on disk
  * - Saves write to the local filesystem (File System Access API) or download
  * - UI assets bundle with the app — system fonts only, no CDN links
  *

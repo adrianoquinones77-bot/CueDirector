@@ -224,6 +224,30 @@ body,
   border-color: #0078ff;
 }
 
+.cue-emoji-input__categories {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.cue-emoji-input__category {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cue-emoji-input__category-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #888;
+}
+
 .cue-emoji-input__presets {
   display: flex;
   flex-wrap: wrap;
@@ -736,6 +760,16 @@ body.is-resizing-panels * {
   border-right: 1px solid #1a1a1a;
 }
 
+.content--editor .video-column {
+  overflow: visible;
+}
+
+.content--editor .cue-timeline--editor {
+  flex-shrink: 0;
+  width: 100%;
+  max-width: none;
+}
+
 .video-panel {
   flex: 1 1 auto;
   min-width: 0;
@@ -788,6 +822,10 @@ body.is-resizing-panels * {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
+.cue-timeline--editor {
+  padding: 14px 20px 20px;
+}
+
 .cue-timeline--empty .cue-timeline__track {
   cursor: default;
   opacity: 0.55;
@@ -799,13 +837,126 @@ body.is-resizing-panels * {
 
 .cue-timeline__header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: #aaa;
+}
+
+.cue-timeline__zoom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+.cue-timeline__zoom-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #bbb;
+  white-space: nowrap;
+}
+
+.cue-timeline__zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.cue-timeline__zoom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  background: #252525;
+  color: #ddd;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cue-timeline__zoom-btn:hover:not(:disabled) {
+  background: #333;
+  border-color: #555;
+  color: #fff;
+}
+
+.cue-timeline__zoom-btn:active:not(:disabled) {
+  background: #1a1a1a;
+}
+
+.cue-timeline__zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cue-timeline__zoom-level {
+  min-width: 3ch;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.cue-timeline__scroll {
+  width: 100%;
+}
+
+.cue-timeline__scroll--zoomable {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-color: #444 #141414;
+  scrollbar-width: thin;
+}
+
+.cue-timeline__scroll--zoomable::-webkit-scrollbar {
+  height: 10px;
+}
+
+.cue-timeline__scroll--zoomable::-webkit-scrollbar-track {
+  background: #141414;
+  border-radius: 999px;
+}
+
+.cue-timeline__scroll--zoomable::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 999px;
+}
+
+.cue-timeline__scroll--zoomable::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+.cue-timeline--editor .cue-timeline__track,
+.cue-timeline--director .cue-timeline__track {
+  min-width: 100%;
+}
+
+.cue-timeline__track--view-only {
+  cursor: default;
+}
+
+.cue-timeline--director .cue-timeline__marker {
+  cursor: default;
 }
 
 .cue-timeline__time--total {
@@ -823,6 +974,11 @@ body.is-resizing-panels * {
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
 }
 
+.cue-timeline--editor .cue-timeline__track {
+  height: 100px;
+  border-radius: 8px;
+}
+
 .cue-timeline__rail {
   position: absolute;
   left: 8px;
@@ -832,6 +988,13 @@ body.is-resizing-panels * {
   background: #333;
   transform: translateY(-50%);
   pointer-events: none;
+}
+
+.cue-timeline--editor .cue-timeline__rail {
+  left: 12px;
+  right: 12px;
+  height: 3px;
+  background: #444;
 }
 
 .cue-timeline__track--dragging {
@@ -847,10 +1010,12 @@ body.is-resizing-panels * {
   z-index: 3;
   cursor: grab;
   touch-action: none;
+  transition: left 0.08s linear;
 }
 
 .cue-timeline__playhead--dragging {
   cursor: grabbing;
+  transition: none;
 }
 
 .cue-timeline__playhead-handle {
@@ -876,6 +1041,16 @@ body.is-resizing-panels * {
   transform: translateX(-50%);
 }
 
+.cue-timeline--editor .cue-timeline__playhead {
+  width: 18px;
+}
+
+.cue-timeline--editor .cue-timeline__playhead-handle::before {
+  top: -6px;
+  width: 14px;
+  height: 14px;
+}
+
 .cue-timeline__marker {
   position: absolute;
   top: 0;
@@ -893,11 +1068,20 @@ body.is-resizing-panels * {
   padding-top: 2px;
 }
 
+.cue-timeline--editor .cue-timeline__marker {
+  width: 36px;
+  padding-top: 6px;
+}
+
 .cue-timeline__marker-icon {
   font-size: 13px;
   line-height: 1;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
   pointer-events: none;
+}
+
+.cue-timeline--editor .cue-timeline__marker-icon {
+  font-size: 20px;
 }
 
 .cue-timeline__marker::before {
@@ -911,6 +1095,45 @@ body.is-resizing-panels * {
   border-radius: 2px;
   background: currentColor;
   box-shadow: 0 0 6px currentColor;
+}
+
+.cue-timeline--editor .cue-timeline__marker::before {
+  bottom: 10px;
+  width: 4px;
+  height: 28px;
+  border-radius: 3px;
+}
+
+.cue-timeline--editor .cue-timeline__marker {
+  cursor: grab;
+  touch-action: none;
+}
+
+.cue-timeline--editor .cue-timeline__marker--dragging {
+  cursor: grabbing;
+  z-index: 4;
+}
+
+.cue-timeline--editor .cue-timeline__marker--dragging .cue-timeline__tooltip {
+  opacity: 1;
+}
+
+.cue-timeline__track--marker-dragging .cue-timeline__playhead {
+  pointer-events: none;
+}
+
+.cue-timeline--editor .cue-timeline__marker--current::before,
+.cue-timeline--editor .cue-timeline__marker--next::before {
+  width: 5px;
+}
+
+.cue-timeline--editor .cue-timeline__marker--selected::before {
+  width: 6px;
+}
+
+.cue-timeline--editor .cue-timeline__header {
+  margin-bottom: 12px;
+  font-size: 13px;
 }
 
 .cue-timeline__marker--past {
@@ -1018,15 +1241,25 @@ body.is-resizing-panels * {
 }
 
 .cue-sheet-panel {
-  flex-shrink: 0;
-  min-width: 300px;
+  flex: 1 1 auto;
+  min-width: 420px;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 20px 18px 16px;
+  padding: 16px 14px 12px;
   overflow: hidden;
   background: #0a0a0a;
   border-left: 1px solid #1f1f1f;
+}
+
+.cue-rail--editor .cue-sheet-panel {
+  flex: 1 1 0;
+  min-width: 480px;
+  padding: 14px 12px 10px;
+}
+
+.cue-rail--editor .cue-director {
+  flex: 0 0 auto;
 }
 
 .cue-sheet-panel > .cue-section__title {
@@ -1196,10 +1429,11 @@ body.is-resizing-panels * {
   overflow-y: auto;
   width: 100%;
   margin: 0;
-  padding: 0 4px 8px;
+  padding: 0 2px 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  position: relative;
 }
 
 .cue-sheet-list:focus {
@@ -1219,8 +1453,10 @@ body.is-resizing-panels * {
 }
 
 .cue-rail--editor .cue-sheet-item__button {
-  grid-template-columns: 16px 64px 24px minmax(0, 1fr);
-  column-gap: 10px;
+  grid-template-columns: 16px 72px 28px minmax(0, 1fr);
+  column-gap: 12px;
+  min-height: 80px;
+  padding: 14px 16px;
 }
 
 .cue-sheet-item--selected .cue-sheet-item__button {
@@ -1267,11 +1503,12 @@ body.is-resizing-panels * {
   flex: 1;
   min-width: 0;
   width: 100%;
-  padding: 12px 14px;
+  min-height: 72px;
+  padding: 14px 16px;
   border: 1px solid #252525;
   border-radius: 8px;
   background: #141414;
-  line-height: 1.4;
+  line-height: 1.35;
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -1302,7 +1539,7 @@ body.is-resizing-panels * {
 .cue-sheet-item__time {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   text-decoration: none;
   white-space: nowrap;
@@ -1310,7 +1547,7 @@ body.is-resizing-panels * {
 }
 
 .cue-sheet-item__emoji {
-  font-size: 16px;
+  font-size: 20px;
   line-height: 1;
   text-align: center;
 }
@@ -1321,10 +1558,18 @@ body.is-resizing-panels * {
   overflow-wrap: break-word;
   word-break: normal;
   white-space: normal;
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 1.4;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
   color: #ddd;
+}
+
+.cue-rail--editor .cue-sheet-item__name {
+  font-size: 18px;
+}
+
+.cue-rail--editor .cue-sheet-item--current .cue-sheet-item__name {
+  font-size: 20px;
 }
 
 .cue-sheet-item--past .cue-sheet-item__button {
@@ -1358,8 +1603,39 @@ body.is-resizing-panels * {
 
 .cue-sheet-item--current .cue-sheet-item__name {
   color: #fff;
-  font-size: 16px;
+  font-size: 19px;
   font-weight: 700;
+}
+
+.cue-sheet-item--next .cue-sheet-item__button {
+  background: linear-gradient(90deg, #122a16 0%, #101a13 100%);
+  border-color: #34c759;
+  box-shadow:
+    0 0 0 1px rgba(52, 199, 89, 0.35),
+    0 4px 16px rgba(52, 199, 89, 0.12);
+}
+
+.cue-sheet-item--next .cue-sheet-item__icon,
+.cue-sheet-item--next .cue-sheet-item__time {
+  color: #5cd975;
+  font-weight: 600;
+}
+
+.cue-sheet-item--next .cue-sheet-item__name {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.cue-rail--editor .cue-sheet-item--next .cue-sheet-item__name {
+  font-size: 19px;
+}
+
+.cue-sheet-item--selected.cue-sheet-item--next .cue-sheet-item__button {
+  border-color: #0078ff;
+  box-shadow:
+    0 0 0 1px rgba(0, 120, 255, 0.45),
+    inset 0 0 0 1px rgba(52, 199, 89, 0.2);
 }
 
 .cue-sheet-item--future .cue-sheet-item__time {
@@ -1368,7 +1644,7 @@ body.is-resizing-panels * {
 
 .cue-sheet-item--future .cue-sheet-item__name {
   color: #bbb;
-  font-weight: 400;
+  font-weight: 500;
 }
 
 .cue-divider {
@@ -1415,7 +1691,11 @@ body.is-resizing-panels * {
   height: 100%;
   background: linear-gradient(90deg, #16a34a, #22c55e);
   border-radius: 999px;
-  transition: width 0.15s linear;
+  transition: width 0.1s linear;
+}
+
+.cue-countdown-progress__fill--snap {
+  transition: none;
 }
 
 .footer {

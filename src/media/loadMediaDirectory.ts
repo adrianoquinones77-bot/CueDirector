@@ -18,6 +18,7 @@ export async function pickMediaDirectory(): Promise<FileSystemDirectoryHandle | 
 
 export async function collectFilesFromDirectory(
   directoryHandle: FileSystemDirectoryHandle,
+  relativePrefix = "",
 ): Promise<{
   files: File[];
   cuesFileHandles: Map<string, FileSystemFileHandle>;
@@ -26,18 +27,55 @@ export async function collectFilesFromDirectory(
   const cuesFileHandles = new Map<string, FileSystemFileHandle>();
 
   for await (const entry of directoryHandle.values()) {
-    if (entry.kind !== "file") continue;
+    const entryPath = relativePrefix
+      ? `${relativePrefix}/${entry.name}`
+      : entry.name;
 
-    const handle = entry as FileSystemFileHandle;
-    const file = await handle.getFile();
-    files.push(file);
+    if (entry.kind === "file") {
+      const handle = entry as FileSystemFileHandle;
+      const file = await handle.getFile();
+      attachRelativePath(file, entryPath);
+      files.push(file);
 
-    if (file.name.toLowerCase().endsWith(".cues")) {
-      cuesFileHandles.set(getMediaBaseName(file.name).toLowerCase(), handle);
+      if (file.name.toLowerCase().endsWith(".cues")) {
+        cuesFileHandles.set(getMediaBaseName(file.name).toLowerCase(), handle);
+      }
+      continue;
+    }
+
+    if (entry.kind === "directory") {
+      const nested = await collectFilesFromDirectory(
+        entry as FileSystemDirectoryHandle,
+        entryPath,
+      );
+      files.push(...nested.files);
+      nested.cuesFileHandles.forEach((handle, key) => {
+        cuesFileHandles.set(key, handle);
+      });
     }
   }
 
   return { files, cuesFileHandles };
+}
+
+function attachRelativePath(file: File, relativePath: string): void {
+  const normalized = relativePath.replace(/\\/g, "/");
+  if (
+    "webkitRelativePath" in file &&
+    typeof file.webkitRelativePath === "string" &&
+    file.webkitRelativePath
+  ) {
+    return;
+  }
+
+  try {
+    Object.defineProperty(file, "webkitRelativePath", {
+      value: normalized,
+      configurable: true,
+    });
+  } catch {
+    // Some runtimes disallow defining properties on File objects.
+  }
 }
 
 export async function buildPlaylistFromDirectory(

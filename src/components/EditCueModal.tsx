@@ -5,7 +5,7 @@ import {
   normalizeCueEmoji,
   resolveCueEmoji,
 } from "../utils/cueEmoji";
-import { formatTime } from "../utils/formatTime";
+import { formatTime, parseCueEditorTime } from "../utils/formatTime";
 import CueEmojiInput from "./CueEmojiInput";
 
 interface EditCueModalProps {
@@ -45,8 +45,8 @@ export default function EditCueModal({
     event.preventDefault();
 
     const cueName = nameRef.current?.value.trim() ?? "";
-    const timeValue = Number(timeRef.current?.value);
-    if (!cueName || Number.isNaN(timeValue) || timeValue < 0) return;
+    const timeValue = parseCueEditorTime(timeRef.current?.value ?? "");
+    if (!cueName || timeValue === null) return;
 
     const normalizedEmoji = normalizeCueEmoji(emoji.trim() || DEFAULT_CUE_EMOJI);
     const updated: Cue = {
@@ -81,16 +81,16 @@ export default function EditCueModal({
         </label>
 
         <label className="dialog__field">
-          <span className="dialog__label">Time (seconds)</span>
+          <span className="dialog__label">Time (MM:SS.t)</span>
           <input
             ref={timeRef}
-            type="number"
+            type="text"
             className="dialog__input"
-            min={0}
-            step={0.1}
-            defaultValue={cue.time}
+            inputMode="decimal"
+            placeholder="00:00.0"
+            defaultValue={formatTime(cue.time)}
+            autoComplete="off"
           />
-          <span className="dialog__hint">{formatTime(cue.time)}</span>
         </label>
 
         <CueEmojiInput value={emoji} onChange={setEmoji} />

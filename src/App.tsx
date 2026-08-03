@@ -17,6 +17,7 @@ import VideoPlayer, {
   type VideoPlayerHandle,
 } from "./components/VideoPlayer.tsx";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useLastShowPersistence } from "./hooks/useLastShowPersistence";
 import { useVideoSeekShortcuts } from "./hooks/useVideoSeekShortcuts";
 import { usePanelLayout } from "./hooks/usePanelLayout";
 import { useShowDirector } from "./hooks/useShowDirector";
@@ -35,6 +36,9 @@ function App() {
     cueIndex: number;
   } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [timelineZoom, setTimelineZoom] = useState(1);
+  const [isRelinkingMedia, setIsRelinkingMedia] = useState(false);
+  const [videoDuration, setVideoDuration] = useState(0);
 
   const {
     currentTime,
@@ -47,11 +51,14 @@ function App() {
     loadShowDirectory,
     saveShow,
     openShowFile,
+    tryAutoRestorePendingShow,
+    connectMediaPath,
     connectMediaFolder,
     connectMediaDirectory,
     cancelOpenShow,
     missingVideoFiles,
     dismissMissingVideoFiles,
+    relinkMediaFolder,
     openShowError,
     dismissOpenShowError,
     saveCueError,
@@ -78,7 +85,69 @@ function App() {
     canSaveShow,
     saveCues,
     canSaveCues,
+    restoreFromSession,
+    clearPersistedShow,
+    getMediaDirectoryPath,
+    getShowFilePath,
   } = useShowDirector();
+
+  const handleRestoreSession = useCallback(
+    async (session: Parameters<typeof restoreFromSession>[0]) => {
+      const result = await restoreFromSession(session);
+      if (result) {
+        setTimelineZoom(result.timelineZoom);
+      }
+      return result;
+    },
+    [restoreFromSession],
+  );
+
+  const handleClearLastShow = useCallback(async () => {
+    await clearPersistedShow();
+    setTimelineZoom(1);
+  }, [clearPersistedShow]);
+
+  const applyRestoredTimelineZoom = useCallback((zoom?: number) => {
+    if (zoom === undefined) return;
+    setTimelineZoom(zoom);
+  }, []);
+
+  useEffect(() => {
+    setVideoDuration(0);
+  }, [activeVideoSrc]);
+
+  const handleVideoDurationChange = useCallback((duration: number) => {
+    setVideoDuration(duration);
+  }, []);
+
+  const handleShowRestored = useCallback(
+    (timelineZoom?: number) => {
+      applyRestoredTimelineZoom(timelineZoom);
+    },
+    [applyRestoredTimelineZoom],
+  );
+
+  useLastShowPersistence({
+    showInfo,
+    autoAdvance,
+    defaultCueDuration,
+    playlist,
+    activeSongIndex,
+    currentTime,
+    timelineZoom,
+    getMediaDirectoryPath,
+    getShowFilePath,
+    onRestore: handleRestoreSession,
+  });
+
+  const handleRelinkMediaFolder = useCallback(async () => {
+    setIsRelinkingMedia(true);
+    try {
+      await relinkMediaFolder(timelineZoom);
+    } finally {
+      setIsRelinkingMedia(false);
+    }
+  }, [relinkMediaFolder, timelineZoom]);
 
   const panelLayout = usePanelLayout(contentRef);
 
@@ -148,6 +217,15 @@ function App() {
   const handleSelectCue = useCallback((index: number) => {
     setSelectedCueIndex(index);
   }, []);
+
+  const handleUpdateCueTime = useCallback(
+    (index: number, time: number) => {
+      const cue = cues[index];
+      if (!cue) return;
+      updateCue(index, { ...cue, time });
+    },
+    [cues, updateCue],
+  );
 
   const handleCueContextMenu = useCallback(
     (index: number, event: MouseEvent) => {
@@ -281,11 +359,15 @@ function App() {
   return (
     <div className={`app${editorMode ? " app--editor" : " app--live"}`}>
       <MenuBar
-        onSaveShow={saveShow}
+        onSaveShow={() => saveShow(timelineZoom)}
         onOpenShowFile={openShowFile}
+        onTryAutoRestorePendingShow={tryAutoRestorePendingShow}
+        onConnectMediaPath={connectMediaPath}
         onConnectMediaDirectory={connectMediaDirectory}
         onConnectMediaFolder={connectMediaFolder}
         onCancelOpenShow={cancelOpenShow}
+        onClearLastShow={handleClearLastShow}
+        onShowRestored={handleShowRestored}
         canSaveShow={canSaveShow}
         directorMode={directorMode}
       />
@@ -326,6 +408,7 @@ function App() {
               ref={videoPlayerRef}
               src={activeVideoSrc}
               onTimeUpdate={handleTimeUpdate}
+              onDurationChange={handleVideoDurationChange}
               onEnded={handleVideoEnded}
             />
           </div>
@@ -335,10 +418,16 @@ function App() {
             currentTime={currentTime}
             defaultCueDuration={defaultCueDuration}
             videoPlayerRef={videoPlayerRef}
+            videoSrc={activeVideoSrc}
+            videoDuration={videoDuration}
+            directorMode={directorMode}
             editorMode={editorMode}
             selectedCueIndex={editorMode ? selectedCueIndex : null}
             onSelectCue={editorMode ? handleSelectCue : undefined}
             onCueContextMenu={editorMode ? handleCueContextMenu : undefined}
+            onUpdateCueTime={editorMode ? handleUpdateCueTime : undefined}
+            timelineZoom={timelineZoom}
+            onTimelineZoomChange={setTimelineZoom}
           />
         </div>
 
@@ -389,6 +478,8 @@ function App() {
       {missingVideoFiles.length > 0 && (
         <MissingFilesDialog
           files={missingVideoFiles}
+          isRelinking={isRelinkingMedia}
+          onRelink={handleRelinkMediaFolder}
           onClose={dismissMissingVideoFiles}
         />
       )}

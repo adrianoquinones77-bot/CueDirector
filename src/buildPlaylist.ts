@@ -36,6 +36,8 @@ export async function buildPlaylistFromFiles(files: FileList | File[]): Promise<
 
 export function revokePlaylistUrls(playlist: Song[]): void {
   for (const song of playlist) {
-    URL.revokeObjectURL(song.videoUrl);
+    if (song.videoUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(song.videoUrl);
+    }
   }
 }

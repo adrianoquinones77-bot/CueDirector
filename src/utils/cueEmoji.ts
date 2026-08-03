@@ -4,20 +4,65 @@ import { getCueTypeIcon } from "./cueType";
 
 export const DEFAULT_CUE_EMOJI = "📝";
 
-export const CUE_EMOJI_PRESETS = [
-  "📝",
-  "🎥",
-  "🎸",
-  "💡",
-  "🎤",
-  "🔥",
-  "🎬",
-  "⚫",
-  "🎉",
-  "📹",
-  "🥁",
-  "🎹",
+export interface CueEmojiCategory {
+  id: string;
+  label: string;
+  emojis: readonly string[];
+}
+
+export const CUE_EMOJI_CATEGORIES: readonly CueEmojiCategory[] = [
+  {
+    id: "general",
+    label: "General",
+    emojis: ["📝", "⚫"],
+  },
+  {
+    id: "dj",
+    label: "DJ / Performance",
+    emojis: ["🎧", "🎛️", "🎤", "🎙️", "🔊", "🔈", "📻"],
+  },
+  {
+    id: "music",
+    label: "Music",
+    emojis: [
+      "🎵",
+      "🎶",
+      "🎼",
+      "🎹",
+      "🎸",
+      "🎷",
+      "🎺",
+      "🥁",
+      "🎻",
+      "🪕",
+    ],
+  },
+  {
+    id: "show",
+    label: "Show / Stage",
+    emojis: ["🎥", "📹", "🎬", "💡", "🔥", "🎉", "👏"],
+  },
 ] as const;
+
+function flattenEmojiCategories(
+  categories: readonly CueEmojiCategory[],
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const category of categories) {
+    for (const emoji of category.emojis) {
+      if (seen.has(emoji)) continue;
+      seen.add(emoji);
+      result.push(emoji);
+    }
+  }
+
+  return result;
+}
+
+/** Flat preset list (deduped) for compatibility with existing picker usage. */
+export const CUE_EMOJI_PRESETS = flattenEmojiCategories(CUE_EMOJI_CATEGORIES);
 
 const EMOJI_PATTERN =
   /^[\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\s]+$/u;

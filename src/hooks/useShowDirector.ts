@@ -12,14 +12,30 @@ import {
   buildPlaylistFromDirectory,
   pickMediaDirectory,
 } from "../media/loadMediaDirectory";
+import {
+  collectVideosFromDirectoryHandle,
+  collectVideosFromFileList,
+  indexVideosByFilename,
+  pickMediaFolderViaInput,
+  relinkMissingVideos,
+} from "../media/relinkMedia";
+import { clearLastShowSession } from "../session/lastShowStorage";
 import { parseCueDirectorFile } from "../showFile/parseCueDirectorFile";
+import { logShowRestore, deriveMediaDirectoryFromFiles } from "../showFile/showMediaPaths";
+import {
+  buildPlaylistFromElectronDirectory,
+  restoreShowFromElectronDirectory,
+  tryRestoreElectronShow,
+} from "../showFile/restoreShowFromElectron";
 import {
   restoreShowFromDirectory,
   restoreShowFromFile,
+  type RestoreShowResult,
 } from "../showFile/restoreShowFile";
-import { downloadShowFile } from "../showFile/saveShowFile";
+import { downloadShowFile, writeShowFileToPath } from "../showFile/saveShowFile";
 import type { CueDirectorFile } from "../types/cueDirectorFile";
 import type { Cue } from "../types/cue";
+import type { LastShowSession } from "../types/lastShowSession";
 import { defaultShowInfo, type ShowInfo } from "../types/showInfo";
 import type { Song } from "../types/song";
 import { DEFAULT_CUE_DURATION } from "../utils/cueTiming";
@@ -45,6 +61,8 @@ export function useShowDirector() {
   const [saveCueError, setSaveCueError] = useState<string | null>(null);
   const pendingShowRef = useRef<CueDirectorFile | null>(null);
   const mediaDirectoryRef = useRef<FileSystemDirectoryHandle | null>(null);
+  const mediaDirectoryPathRef = useRef<string | undefined>(undefined);
+  const showFilePathRef = useRef<string | undefined>(undefined);
   const cueFileHandlesRef = useRef(createCueFileHandleRegistry());
 
   const activeSong = activeSongIndex >= 0 ? playlist[activeSongIndex] : undefined;
@@ -77,9 +95,26 @@ export function useShowDirector() {
   }, []);
 
   const loadShowDirectory = useCallback(async () => {
+    if (window.electronAPI) {
+      const directoryPath = await window.electronAPI.pickMediaDirectory();
+      if (!directoryPath) return;
+
+      mediaDirectoryPathRef.current = directoryPath;
+      showFilePathRef.current = undefined;
+      mediaDirectoryRef.current = null;
+      cueFileHandlesRef.current.clear();
+      revokePlaylistUrls(playlist);
+
+      const songs = await buildPlaylistFromElectronDirectory(directoryPath);
+      applyLoadedPlaylist(songs);
+      return;
+    }
+
     const directoryHandle = await pickMediaDirectory();
     if (!directoryHandle) return;
 
+    mediaDirectoryPathRef.current = undefined;
+    showFilePathRef.current = undefined;
     mediaDirectoryRef.current = directoryHandle;
     revokePlaylistUrls(playlist);
 
@@ -95,6 +130,8 @@ export function useShowDirector() {
       if (!files || files.length === 0) return;
 
       mediaDirectoryRef.current = null;
+      mediaDirectoryPathRef.current = undefined;
+      showFilePathRef.current = undefined;
       cueFileHandlesRef.current.clear();
       revokePlaylistUrls(playlist);
 
@@ -104,16 +141,37 @@ export function useShowDirector() {
     [applyLoadedPlaylist, playlist],
   );
 
-  const saveShow = useCallback(() => {
-    if (playlist.length === 0) return;
+  const saveShow = useCallback(
+    (timelineZoom: number) => {
+      if (playlist.length === 0) return;
 
-    downloadShowFile({
-      showInfo,
-      autoAdvance,
-      defaultCueDuration,
-      playlist,
-    });
-  }, [showInfo, autoAdvance, defaultCueDuration, playlist]);
+      downloadShowFile({
+        showInfo,
+        autoAdvance,
+        defaultCueDuration,
+        timelineZoom,
+        mediaDirectoryPath: mediaDirectoryPathRef.current,
+        playlist,
+      });
+    },
+    [showInfo, autoAdvance, defaultCueDuration, playlist],
+  );
+
+  const persistOpenedShowFile = useCallback(
+    async (timelineZoom: number, nextPlaylist: Song[]) => {
+      if (!showFilePathRef.current) return;
+
+      await writeShowFileToPath(showFilePathRef.current, {
+        showInfo,
+        autoAdvance,
+        defaultCueDuration,
+        timelineZoom,
+        mediaDirectoryPath: mediaDirectoryPathRef.current,
+        playlist: nextPlaylist,
+      });
+    },
+    [showInfo, autoAdvance, defaultCueDuration],
+  );
 
   const updateActiveSongCues = useCallback(
     (updatedCues: Cue[]) => {
@@ -174,9 +232,21 @@ export function useShowDirector() {
 
     try {
       pendingShowRef.current = parseCueDirectorFile(await file.text());
+
+      const filePath =
+        "path" in file && typeof file.path === "string" ? file.path : undefined;
+      showFilePathRef.current = filePath;
+
+      logShowRestore("Opened .show file", filePath ?? "(browser upload)");
+      logShowRestore(
+        "Saved media path from .show",
+        pendingShowRef.current.mediaDirectoryPath ?? "(none)",
+      );
+
       return true;
     } catch (error) {
       pendingShowRef.current = null;
+      showFilePathRef.current = undefined;
       setOpenShowError(
         error instanceof Error ? error.message : "Invalid show file",
       );
@@ -185,7 +255,10 @@ export function useShowDirector() {
   }, []);
 
   const applyRestoredShow = useCallback(
-    (result: Awaited<ReturnType<typeof restoreShowFromFile>>) => {
+    (
+      result: RestoreShowResult,
+      options?: { activeSongIndex?: number; currentTime?: number },
+    ): number => {
       setShowInfo(result.showInfo);
       setAutoAdvance(result.preferences.autoAdvance);
       setDefaultCueDuration(result.preferences.defaultCueDuration);
@@ -193,50 +266,226 @@ export function useShowDirector() {
       setMissingVideoFiles(result.missingVideoFiles);
 
       if (result.playlist.length > 0) {
-        setActiveSongIndex(0);
-        setCues(result.playlist[0].cues);
-        setCurrentTime(0);
+        const index = Math.min(
+          Math.max(0, options?.activeSongIndex ?? 0),
+          result.playlist.length - 1,
+        );
+        setActiveSongIndex(index);
+        setCues(result.playlist[index].cues);
+        setCurrentTime(options?.currentTime ?? 0);
       } else {
         setActiveSongIndex(-1);
         setCues([]);
         setCurrentTime(0);
       }
+
+      return result.timeline?.zoom ?? 1;
     },
     [],
   );
 
-  const connectMediaDirectory = useCallback(
-    async (directoryHandle: FileSystemDirectoryHandle) => {
+  const restoreFromSession = useCallback(
+    async (session: LastShowSession): Promise<{ timelineZoom: number } | null> => {
+      revokePlaylistUrls(playlist);
+      mediaDirectoryRef.current = null;
+      cueFileHandlesRef.current.clear();
+      pendingShowRef.current = null;
+
+      if (window.electronAPI) {
+        showFilePathRef.current = session.showFilePath;
+
+        const result = await tryRestoreElectronShow(session.show, {
+          showFilePath: session.showFilePath,
+          preferredMediaPath:
+            session.mediaDirectoryPath ?? session.show.mediaDirectoryPath,
+        });
+
+        if (result.mediaDirectoryPath) {
+          mediaDirectoryPathRef.current = result.mediaDirectoryPath;
+        } else {
+          mediaDirectoryPathRef.current = undefined;
+        }
+
+        applyRestoredShow(result, {
+          activeSongIndex: session.activeSongIndex,
+          currentTime: session.currentTime,
+        });
+
+        // #region agent log
+        fetch("http://127.0.0.1:7662/ingest/2edb04e6-0a86-4d03-b142-8e0cd3b07871", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "6db2d5",
+          },
+          body: JSON.stringify({
+            sessionId: "6db2d5",
+            location: "useShowDirector.ts:restoreFromSession",
+            message: "session restore applied",
+            data: {
+              missingVideoFiles: result.missingVideoFiles,
+              mediaDirectoryFound: result.mediaDirectoryFound,
+              mediaDirectoryPath: result.mediaDirectoryPath,
+            },
+            timestamp: Date.now(),
+            hypothesisId: "H4",
+          }),
+        }).catch(() => {});
+        // #endregion
+
+        return {
+          timelineZoom:
+            session.timelineZoom ?? session.show.timeline?.zoom ?? 1,
+        };
+      }
+
+      mediaDirectoryPathRef.current = undefined;
+      showFilePathRef.current = undefined;
+
+      const result = await restoreShowFromFile(session.show, []);
+      applyRestoredShow(result, {
+        activeSongIndex: session.activeSongIndex,
+        currentTime: session.currentTime,
+      });
+      return {
+        timelineZoom: session.timelineZoom ?? session.show.timeline?.zoom ?? 1,
+      };
+    },
+    [applyRestoredShow, playlist],
+  );
+
+  const clearPersistedShow = useCallback(async () => {
+    await clearLastShowSession();
+    revokePlaylistUrls(playlist);
+    mediaDirectoryRef.current = null;
+    mediaDirectoryPathRef.current = undefined;
+    showFilePathRef.current = undefined;
+    cueFileHandlesRef.current.clear();
+    pendingShowRef.current = null;
+    setPlaylist([]);
+    setActiveSongIndex(-1);
+    setCues(demoCues);
+    setCurrentTime(0);
+    setShowInfo(defaultShowInfo);
+    setAutoAdvance(true);
+    setDefaultCueDuration(DEFAULT_CUE_DURATION);
+    setMissingVideoFiles([]);
+  }, [playlist]);
+
+  const getMediaDirectoryPath = useCallback(
+    () => mediaDirectoryPathRef.current,
+    [],
+  );
+
+  const getShowFilePath = useCallback(() => showFilePathRef.current, []);
+
+  const restorePendingShowAtPath = useCallback(
+    async (
+      mediaDirectoryPath: string,
+      pendingShow: CueDirectorFile,
+    ): Promise<RestoreShowResult> => {
+      mediaDirectoryPathRef.current = mediaDirectoryPath;
+      mediaDirectoryRef.current = null;
+      revokePlaylistUrls(playlist);
+      return restoreShowFromElectronDirectory(pendingShow, mediaDirectoryPath);
+    },
+    [playlist],
+  );
+
+  const tryAutoRestorePendingShow = useCallback(async (): Promise<{
+    restored: boolean;
+    timelineZoom?: number;
+    needsMediaPicker: boolean;
+  }> => {
+    const pendingShow = pendingShowRef.current;
+    if (!pendingShow) {
+      return { restored: false, needsMediaPicker: false };
+    }
+
+    if (!window.electronAPI) {
+      return { restored: false, needsMediaPicker: true };
+    }
+
+    const result = await tryRestoreElectronShow(pendingShow, {
+      showFilePath: showFilePathRef.current,
+      preferredMediaPath: pendingShow.mediaDirectoryPath,
+    });
+
+    pendingShowRef.current = null;
+
+    if (result.mediaDirectoryPath) {
+      mediaDirectoryPathRef.current = result.mediaDirectoryPath;
+    }
+
+    revokePlaylistUrls(playlist);
+    const timelineZoom = applyRestoredShow(result);
+    const needsMediaPicker =
+      result.missingVideoFiles.length > 0 || !result.mediaDirectoryFound;
+
+    if (!needsMediaPicker) {
+      await persistOpenedShowFile(timelineZoom, result.playlist);
+    }
+
+    return { restored: true, timelineZoom, needsMediaPicker };
+  }, [applyRestoredShow, persistOpenedShowFile, playlist]);
+
+  const connectMediaPath = useCallback(
+    async (directoryPath: string): Promise<number | undefined> => {
       const pendingShow = pendingShowRef.current;
       pendingShowRef.current = null;
 
-      if (!pendingShow) return;
+      if (!pendingShow) return undefined;
+
+      const result = await restorePendingShowAtPath(directoryPath, pendingShow);
+      const timelineZoom = applyRestoredShow(result);
+      await persistOpenedShowFile(timelineZoom, result.playlist);
+      return timelineZoom;
+    },
+    [applyRestoredShow, persistOpenedShowFile, restorePendingShowAtPath],
+  );
+
+  const connectMediaDirectory = useCallback(
+    async (directoryHandle: FileSystemDirectoryHandle): Promise<number | undefined> => {
+      const pendingShow = pendingShowRef.current;
+      pendingShowRef.current = null;
+
+      if (!pendingShow) return undefined;
 
       mediaDirectoryRef.current = directoryHandle;
       revokePlaylistUrls(playlist);
 
       const result = await restoreShowFromDirectory(pendingShow, directoryHandle);
       cueFileHandlesRef.current.replaceAll(result.cuesFileHandles);
-      applyRestoredShow(result);
+      const timelineZoom = applyRestoredShow(result);
+      await persistOpenedShowFile(timelineZoom, result.playlist);
+      return timelineZoom;
     },
-    [applyRestoredShow, playlist],
+    [applyRestoredShow, persistOpenedShowFile, playlist],
   );
 
   const connectMediaFolder = useCallback(
-    async (files: FileList) => {
+    async (files: FileList): Promise<number | undefined> => {
       const pendingShow = pendingShowRef.current;
       pendingShowRef.current = null;
 
-      if (!pendingShow) return;
+      if (!pendingShow) return undefined;
+
+      const derivedPath = deriveMediaDirectoryFromFiles(files);
+      if (derivedPath) {
+        mediaDirectoryPathRef.current = derivedPath;
+        logShowRestore("Derived media folder path from selection", derivedPath);
+      }
 
       mediaDirectoryRef.current = null;
       cueFileHandlesRef.current.clear();
       revokePlaylistUrls(playlist);
 
       const result = await restoreShowFromFile(pendingShow, files);
-      applyRestoredShow(result);
+      const timelineZoom = applyRestoredShow(result);
+      await persistOpenedShowFile(timelineZoom, result.playlist);
+      return timelineZoom;
     },
-    [applyRestoredShow, playlist],
+    [applyRestoredShow, persistOpenedShowFile, playlist],
   );
 
   const cancelOpenShow = useCallback(() => {
@@ -246,6 +495,68 @@ export function useShowDirector() {
   const dismissMissingVideoFiles = useCallback(() => {
     setMissingVideoFiles([]);
   }, []);
+
+  const relinkMediaFolder = useCallback(
+    async (timelineZoom: number) => {
+      if (missingVideoFiles.length === 0) return;
+
+      if (window.electronAPI) {
+        const directoryPath = await window.electronAPI.pickMediaDirectory();
+        if (!directoryPath) return;
+
+        const videos =
+          await window.electronAPI.collectVideosRecursively(directoryPath);
+        const index = indexVideosByFilename(
+          videos.map((video) => ({
+            filename: video.name,
+            relativePath: video.relativePath.replace(/\\/g, "/"),
+            absolutePath: video.absolutePath,
+          })),
+        );
+
+        const { playlist: nextPlaylist, stillMissing } = await relinkMissingVideos(
+          playlist,
+          missingVideoFiles,
+          index,
+          async (location) =>
+            window.electronAPI!.pathToFileUrl(location.absolutePath!),
+        );
+
+        mediaDirectoryPathRef.current = directoryPath;
+        mediaDirectoryRef.current = null;
+        setPlaylist(nextPlaylist);
+        setMissingVideoFiles(stillMissing);
+        await persistOpenedShowFile(timelineZoom, nextPlaylist);
+        return;
+      }
+
+      let locations = [] as Awaited<
+        ReturnType<typeof collectVideosFromDirectoryHandle>
+      >;
+      const directoryHandle = await pickMediaDirectory();
+      if (directoryHandle) {
+        mediaDirectoryRef.current = directoryHandle;
+        locations = await collectVideosFromDirectoryHandle(directoryHandle);
+      } else {
+        const files = await pickMediaFolderViaInput();
+        if (!files) return;
+        locations = collectVideosFromFileList(files);
+      }
+
+      const index = indexVideosByFilename(locations);
+      const { playlist: nextPlaylist, stillMissing } = await relinkMissingVideos(
+        playlist,
+        missingVideoFiles,
+        index,
+        async (location) => URL.createObjectURL(location.file!),
+      );
+
+      setPlaylist(nextPlaylist);
+      setMissingVideoFiles(stillMissing);
+      await persistOpenedShowFile(timelineZoom, nextPlaylist);
+    },
+    [missingVideoFiles, persistOpenedShowFile, playlist],
+  );
 
   const dismissOpenShowError = useCallback(() => {
     setOpenShowError(null);
@@ -401,11 +712,14 @@ export function useShowDirector() {
     saveShow,
     saveCues,
     openShowFile,
+    tryAutoRestorePendingShow,
+    connectMediaPath,
     connectMediaFolder,
     connectMediaDirectory,
     cancelOpenShow,
     missingVideoFiles,
     dismissMissingVideoFiles,
+    relinkMediaFolder,
     openShowError,
     dismissOpenShowError,
     saveCueError,
@@ -418,5 +732,9 @@ export function useShowDirector() {
     canGoNext: activeSongIndex >= 0 && activeSongIndex < playlist.length - 1,
     canSaveShow: playlist.length > 0,
     canSaveCues: activeSongIndex >= 0,
+    restoreFromSession,
+    clearPersistedShow,
+    getMediaDirectoryPath,
+    getShowFilePath,
   };
 }

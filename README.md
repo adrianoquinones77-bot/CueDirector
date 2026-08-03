@@ -1,6 +1,6 @@
 # CueDirector
 
-Offline live show cue director. Load local MP4 videos, CSV / `.cues` cue sheets, and `.cuedirector` show files — no internet, no cloud, no external APIs.
+Offline live show cue director. Load local MP4 videos, CSV / `.cues` cue sheets, and `.show` project files — no internet, no cloud, no external APIs.
 
 ## Offline-first
 
@@ -10,7 +10,7 @@ CueDirector is built for live venues with no WiFi:
 |------|--------|
 | App (HTML/JS/CSS) | Bundled locally — `npm run build` |
 | Videos | Local MP4 files from your media folder |
-| Cues | Local CSV, `.cues`, or embedded in `.cuedirector` |
+| Cues | Local CSV, `.cues`, or embedded in `.show` |
 | Saves | Local filesystem or browser download |
 
 At runtime the app makes **zero network requests**. Videos play from in-memory blob URLs; cues are read and written to disk on your machine.
@@ -48,7 +48,8 @@ npm run dev
 - **`.mp4`** — video playback
 - **`.csv`** — cue sheet (time, text columns)
 - **`.cues`** — JSON cue sidecar (overrides CSV when both exist)
-- **`.cuedirector`** — show file (playlist, preferences, cue snapshots)
+- **`.show`** — project file (video references, playlist order, cues, timeline & editor settings)
+- **`.cuedirector`** — legacy project file (still supported when opening)
 
 ## Browser support
 

@@ -11,7 +11,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     watch: {
-      ignored: ["**/*.cues", "**/*.mp4", "**/*.csv", "**/*.cuedirector"],
+      ignored: ["**/*.cues", "**/*.mp4", "**/*.csv", "**/*.show", "**/*.cuedirector"],
     },
   },
   preview: {

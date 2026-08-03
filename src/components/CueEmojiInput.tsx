@@ -1,5 +1,5 @@
 import {
-  CUE_EMOJI_PRESETS,
+  CUE_EMOJI_CATEGORIES,
   DEFAULT_CUE_EMOJI,
 } from "../utils/cueEmoji";
 
@@ -25,18 +25,25 @@ export default function CueEmojiInput({ value, onChange }: CueEmojiInputProps) {
           spellCheck={false}
         />
       </label>
-      <div className="cue-emoji-input__presets">
-        {CUE_EMOJI_PRESETS.map((emoji) => (
-          <button
-            key={emoji}
-            type="button"
-            className={`cue-emoji-input__preset${value === emoji ? " cue-emoji-input__preset--selected" : ""}`}
-            onClick={() => onChange(emoji)}
-            aria-label={`Use ${emoji} emoji`}
-            aria-pressed={value === emoji}
-          >
-            {emoji}
-          </button>
+      <div className="cue-emoji-input__categories">
+        {CUE_EMOJI_CATEGORIES.map((category) => (
+          <section key={category.id} className="cue-emoji-input__category">
+            <h3 className="cue-emoji-input__category-label">{category.label}</h3>
+            <div className="cue-emoji-input__presets">
+              {category.emojis.map((emoji) => (
+                <button
+                  key={`${category.id}-${emoji}`}
+                  type="button"
+                  className={`cue-emoji-input__preset${value === emoji ? " cue-emoji-input__preset--selected" : ""}`}
+                  onClick={() => onChange(emoji)}
+                  aria-label={`Use ${emoji} emoji`}
+                  aria-pressed={value === emoji}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          </section>
         ))}
       </div>
     </fieldset>

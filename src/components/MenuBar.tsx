@@ -7,11 +7,19 @@ import {
 interface MenuBarProps {
   onSaveShow: () => void;
   onOpenShowFile: (file: File) => Promise<boolean>;
+  onTryAutoRestorePendingShow: () => Promise<{
+    restored: boolean;
+    timelineZoom?: number;
+    needsMediaPicker: boolean;
+  }>;
+  onConnectMediaPath: (directoryPath: string) => Promise<number | undefined>;
   onConnectMediaDirectory: (
     directoryHandle: FileSystemDirectoryHandle,
-  ) => Promise<void>;
-  onConnectMediaFolder: (files: FileList) => void;
+  ) => Promise<number | undefined>;
+  onConnectMediaFolder: (files: FileList) => Promise<number | undefined>;
   onCancelOpenShow: () => void;
+  onClearLastShow: () => void | Promise<void>;
+  onShowRestored: (timelineZoom?: number) => void;
   canSaveShow: boolean;
   directorMode: boolean;
 }
@@ -19,9 +27,13 @@ interface MenuBarProps {
 export default function MenuBar({
   onSaveShow,
   onOpenShowFile,
+  onTryAutoRestorePendingShow,
+  onConnectMediaPath,
   onConnectMediaDirectory,
   onConnectMediaFolder,
   onCancelOpenShow,
+  onClearLastShow,
+  onShowRestored,
   canSaveShow,
   directorMode,
 }: MenuBarProps) {
@@ -62,22 +74,40 @@ export default function MenuBar({
     if (!file) return;
 
     const ready = await onOpenShowFile(file);
-    if (ready) {
-      if (supportsMediaDirectoryPicker()) {
-        const directoryHandle = await pickMediaDirectory();
-        if (directoryHandle) {
-          await onConnectMediaDirectory(directoryHandle);
-        } else {
-          onCancelOpenShow();
-        }
+    if (!ready) return;
+
+    const autoRestore = await onTryAutoRestorePendingShow();
+    if (autoRestore.restored) {
+      onShowRestored(autoRestore.timelineZoom);
+      if (!autoRestore.needsMediaPicker) return;
+      return;
+    }
+
+    if (window.electronAPI) {
+      const directoryPath = await window.electronAPI.pickMediaDirectory();
+      if (!directoryPath) {
+        onCancelOpenShow();
         return;
       }
 
-      mediaFolderInputRef.current?.click();
+      onShowRestored(await onConnectMediaPath(directoryPath));
+      return;
     }
+
+    if (supportsMediaDirectoryPicker()) {
+      const directoryHandle = await pickMediaDirectory();
+      if (directoryHandle) {
+        onShowRestored(await onConnectMediaDirectory(directoryHandle));
+      } else {
+        onCancelOpenShow();
+      }
+      return;
+    }
+
+    mediaFolderInputRef.current?.click();
   };
 
-  const handleMediaFolderChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleMediaFolderChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     event.target.value = "";
 
@@ -86,7 +116,13 @@ export default function MenuBar({
       return;
     }
 
-    onConnectMediaFolder(files);
+    onShowRestored(await onConnectMediaFolder(files));
+  };
+
+  const handleClearLastShow = () => {
+    setMenuOpen(false);
+    if (directorMode) return;
+    void onClearLastShow();
   };
 
   return (
@@ -94,7 +130,7 @@ export default function MenuBar({
       <input
         ref={showFileInputRef}
         type="file"
-        accept=".cuedirector,application/json"
+        accept=".show,.cuedirector,application/json"
         style={{ display: "none" }}
         onChange={handleShowFileChange}
       />
@@ -140,6 +176,15 @@ export default function MenuBar({
               onClick={handleOpenShow}
             >
               Open Show
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="menu-bar__item"
+              disabled={directorMode}
+              onClick={handleClearLastShow}
+            >
+              Clear Last Show
             </button>
           </div>
         )}

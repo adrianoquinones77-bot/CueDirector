@@ -1,5 +1,6 @@
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import type { Cue } from "../types/cue";
+import { useLiveCountdown } from "../hooks/useLiveCountdown";
 import ResizeHandle from "./ResizeHandle";
 import {
   getCueEndTime,
@@ -29,10 +30,54 @@ interface CuePanelProps {
   onCueContextMenu: (index: number, event: React.MouseEvent) => void;
 }
 
-type CueRowVariant = "past" | "current" | "future";
+type CueRowVariant = "past" | "current" | "next" | "future";
 
 const USER_SCROLL_PAUSE_MS = 2000;
 const LIVE_LABEL = "LIVE";
+
+interface CueSheetIndices {
+  currentIndex: number;
+  nextIndex: number;
+}
+
+function getCueSheetIndices(
+  cues: Cue[],
+  currentTime: number,
+  defaultCueDuration: number,
+): CueSheetIndices {
+  const currentIndex = cues.findIndex((cue) =>
+    isCueActive(cue, currentTime, defaultCueDuration),
+  );
+
+  if (currentIndex >= 0) {
+    const nextIndex =
+      currentIndex + 1 < cues.length ? currentIndex + 1 : -1;
+    return { currentIndex, nextIndex };
+  }
+
+  const nextIndex = cues.findIndex((cue) => cue.time > currentTime);
+  return { currentIndex: -1, nextIndex };
+}
+
+function getCueSheetRowVariant(
+  index: number,
+  cue: Cue,
+  indices: CueSheetIndices,
+  currentTime: number,
+  defaultCueDuration: number,
+): CueRowVariant {
+  const { currentIndex, nextIndex } = indices;
+
+  if (index === currentIndex) return "current";
+  if (index === nextIndex) return "next";
+
+  if (currentIndex >= 0) {
+    return index < currentIndex ? "past" : "future";
+  }
+
+  if (currentTime >= getCueEndTime(cue, defaultCueDuration)) return "past";
+  return "future";
+}
 
 function getNextCueProgress(
   cues: Cue[],
@@ -53,14 +98,11 @@ function getNextCueProgress(
   return (remaining / total) * 100;
 }
 
-function getCueRowVariant(
-  cue: Cue,
-  currentTime: number,
-  defaultCueDuration: number,
-): CueRowVariant {
-  if (isCueActive(cue, currentTime, defaultCueDuration)) return "current";
-  if (currentTime >= getCueEndTime(cue, defaultCueDuration)) return "past";
-  return "future";
+function getRowIcon(variant: CueRowVariant): string {
+  if (variant === "past") return "✓";
+  if (variant === "current") return "▶";
+  if (variant === "next") return "→";
+  return "";
 }
 
 function formatCueSheetTime(time: number): string {
@@ -73,12 +115,6 @@ function formatCueSheetTime(time: number): string {
   }
 
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function getRowIcon(variant: CueRowVariant): string {
-  if (variant === "past") return "✓";
-  if (variant === "current") return "▶";
-  return "";
 }
 
 function DirectorCueDisplay({
@@ -139,14 +175,33 @@ export default function CuePanel({
   onCueContextMenu,
 }: CuePanelProps) {
   const { current, next } = getCueWindow(cues, currentTime, defaultCueDuration);
-  const nowText = getNowDisplayText(current, cues);
-  const nextCueProgress = getNextCueProgress(
+  const cueSheetIndices = getCueSheetIndices(
     cues,
-    current,
-    next,
     currentTime,
     defaultCueDuration,
   );
+  const nowText = getNowDisplayText(current, cues);
+  const computeNextCueProgress = useCallback(
+    (time: number) =>
+      getNextCueProgress(cues, current, next, time, defaultCueDuration),
+    [cues, current, next, defaultCueDuration],
+  );
+  const computeRemaining = useCallback(
+    (time: number) => (next ? Math.max(0, next.time - time) : 0),
+    [next],
+  );
+  const countdownProgressKey = `${current?.time ?? "live"}:${next?.time ?? "none"}`;
+  const {
+    displayRemaining: countdownRemaining,
+    progress: countdownProgress,
+    isPlaying: countdownPlaying,
+  } = useLiveCountdown(
+      computeNextCueProgress,
+      computeRemaining,
+      currentTime,
+      Boolean(next),
+      countdownProgressKey,
+    );
   const currentRowRef = useRef<HTMLLIElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const userScrollingRef = useRef(false);
@@ -213,14 +268,14 @@ export default function CuePanel({
             className={`cue-countdown${next ? " cue-countdown--active" : ""}`}
           >
             {next
-              ? `in ${Math.max(0, next.time - currentTime).toFixed(1)} s`
+              ? `in ${countdownRemaining.toFixed(1)} s`
               : "No upcoming cue"}
           </div>
           {next && (
             <div className="cue-countdown-progress" aria-hidden="true">
               <div
-                className="cue-countdown-progress__fill"
-                style={{ width: `${nextCueProgress}%` }}
+                className={`cue-countdown-progress__fill${countdownPlaying ? "" : " cue-countdown-progress__fill--snap"}`}
+                style={{ width: `${countdownProgress}%` }}
               />
             </div>
           )}
@@ -244,8 +299,10 @@ export default function CuePanel({
           onKeyDown={blockArrowKeyFocusNavigation}
         >
           {cues.map((cue, index) => {
-            const variant = getCueRowVariant(
+            const variant = getCueSheetRowVariant(
+              index,
               cue,
+              cueSheetIndices,
               currentTime,
               defaultCueDuration,
             );
@@ -254,7 +311,7 @@ export default function CuePanel({
 
             return (
               <li
-                key={`${cue.time}-${index}`}
+                key={`${cue.time}-${index}-${cue.text}`}
                 ref={isCurrent ? currentRowRef : undefined}
                 className={`cue-sheet-item cue-sheet-item--${variant}${isSelected ? " cue-sheet-item--selected" : ""}`}
               >

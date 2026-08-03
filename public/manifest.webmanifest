@@ -1,0 +1,17 @@
+{
+  "name": "CueDirector",
+  "short_name": "CueDirector",
+  "description": "Offline live show cue director — no internet required.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#16171d",
+  "theme_color": "#16171d",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

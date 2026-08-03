@@ -1,18 +1,34 @@
 import {
   SHORTCUT_CATEGORY_LABELS,
   SHORTCUT_CATEGORY_ORDER,
-  type ShortcutDefinition,
+  VIDEO_SEEK_SHORTCUTS,
+  type ShortcutCategory,
   type ShortcutHandlers,
   getActiveShortcutsByCategory,
 } from "../keyboard/shortcuts";
 
-interface KeyboardShortcutsGuideProps {
-  handlers: ShortcutHandlers;
+interface ShortcutsToggleProps {
   open: boolean;
   onToggle: () => void;
 }
 
-function ShortcutEntry({ shortcut }: { shortcut: ShortcutDefinition }) {
+interface ShortcutsHelpBarProps {
+  handlers: ShortcutHandlers;
+  editorMode: boolean;
+}
+
+/** Categories shown in Live Mode — essential operator shortcuts only. */
+const LIVE_SHORTCUT_CATEGORIES: ShortcutCategory[] = [
+  "playback",
+  "director",
+  "ui",
+];
+
+function ShortcutEntry({
+  shortcut,
+}: {
+  shortcut: { keys: string[]; label: string; id: string };
+}) {
   return (
     <li className="shortcuts-guide__entry">
       <span className="shortcuts-guide__keys" aria-hidden="true">
@@ -27,50 +43,56 @@ function ShortcutEntry({ shortcut }: { shortcut: ShortcutDefinition }) {
   );
 }
 
-export default function KeyboardShortcutsGuide({
+export function ShortcutsToggle({ open, onToggle }: ShortcutsToggleProps) {
+  return (
+    <button
+      type="button"
+      className={`shortcuts-guide__toggle${open ? " shortcuts-guide__toggle--open" : ""}`}
+      aria-expanded={open}
+      aria-controls="shortcuts-guide-panel"
+      onClick={onToggle}
+    >
+      Shortcuts <span className="shortcuts-guide__hint">?</span>
+    </button>
+  );
+}
+
+export function ShortcutsHelpBar({
   handlers,
-  open,
-  onToggle,
-}: KeyboardShortcutsGuideProps) {
+  editorMode,
+}: ShortcutsHelpBarProps) {
   const grouped = getActiveShortcutsByCategory(handlers);
+  const categories = editorMode
+    ? SHORTCUT_CATEGORY_ORDER
+    : LIVE_SHORTCUT_CATEGORIES;
 
   return (
-    <div className="shortcuts-guide">
-      <button
-        type="button"
-        className={`shortcuts-guide__toggle${open ? " shortcuts-guide__toggle--open" : ""}`}
-        aria-expanded={open}
-        aria-controls="shortcuts-guide-panel"
-        onClick={onToggle}
-      >
-        Shortcuts
-      </button>
+    <div
+      id="shortcuts-guide-panel"
+      className={`shortcuts-bar${editorMode ? " shortcuts-bar--editor" : " shortcuts-bar--live"}`}
+      aria-label="Keyboard shortcuts"
+    >
+      {categories.map((category) => {
+        const shortcuts = grouped[category];
+        const seekShortcuts =
+          !editorMode && category === "playback" ? VIDEO_SEEK_SHORTCUTS : [];
+        const entries = [...(shortcuts ?? []), ...seekShortcuts];
 
-      {open && (
-        <div
-          id="shortcuts-guide-panel"
-          className="shortcuts-guide__panel"
-          aria-label="Keyboard shortcuts"
-        >
-          {SHORTCUT_CATEGORY_ORDER.map((category) => {
-            const shortcuts = grouped[category];
-            if (!shortcuts || shortcuts.length === 0) return null;
+        if (entries.length === 0) return null;
 
-            return (
-              <section key={category} className="shortcuts-guide__section">
-                <h3 className="shortcuts-guide__heading">
-                  {SHORTCUT_CATEGORY_LABELS[category]}
-                </h3>
-                <ul className="shortcuts-guide__list">
-                  {shortcuts.map((shortcut) => (
-                    <ShortcutEntry key={shortcut.id} shortcut={shortcut} />
-                  ))}
-                </ul>
-              </section>
-            );
-          })}
-        </div>
-      )}
+        return (
+          <section key={category} className="shortcuts-guide__section">
+            <h3 className="shortcuts-guide__heading">
+              {SHORTCUT_CATEGORY_LABELS[category]}
+            </h3>
+            <ul className="shortcuts-guide__list">
+              {entries.map((shortcut) => (
+                <ShortcutEntry key={shortcut.id} shortcut={shortcut} />
+              ))}
+            </ul>
+          </section>
+        );
+      })}
     </div>
   );
 }

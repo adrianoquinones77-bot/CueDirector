@@ -34,8 +34,8 @@ export function useShowDirector() {
   const [playlist, setPlaylist] = useState<Song[]>([]);
   const [activeSongIndex, setActiveSongIndex] = useState(-1);
   const [autoAdvance, setAutoAdvance] = useState(true);
-  const [directorMode, setDirectorMode] = useState(false);
-  const [editorMode, setEditorMode] = useState(false);
+  const [directorMode, setDirectorModeState] = useState(false);
+  const [editorMode, setEditorModeState] = useState(false);
   const [showInfo, setShowInfo] = useState<ShowInfo>(defaultShowInfo);
   const [defaultCueDuration, setDefaultCueDuration] = useState(
     DEFAULT_CUE_DURATION,
@@ -254,6 +254,32 @@ export function useShowDirector() {
   const dismissSaveCueError = useCallback(() => {
     setSaveCueError(null);
   }, []);
+
+  const setDirectorMode = useCallback(
+    (value: boolean | ((previous: boolean) => boolean)) => {
+      setDirectorModeState((previous) => {
+        const next = typeof value === "function" ? value(previous) : value;
+        if (next) {
+          setEditorModeState(false);
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const setEditorMode = useCallback(
+    (value: boolean | ((previous: boolean) => boolean)) => {
+      setEditorModeState((previous) => {
+        const next = typeof value === "function" ? value(previous) : value;
+        if (next) {
+          setDirectorModeState(false);
+        }
+        return next;
+      });
+    },
+    [],
+  );
 
   const goToPreviousSong = useCallback(() => {
     if (activeSongIndex > 0) {

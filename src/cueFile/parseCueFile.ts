@@ -1,4 +1,6 @@
 import type { Cue } from "../types/cue";
+import { normalizeCueEmoji } from "../utils/cueEmoji";
+import { normalizeCueType } from "../utils/cueType";
 import {
   CUE_FILE_FORMAT,
   CUE_FILE_VERSION,
@@ -27,6 +29,15 @@ function parseCueEntry(value: unknown): Cue | null {
     Number.isFinite(value.duration)
   ) {
     cue.duration = value.duration;
+  }
+
+  if (typeof value.type === "string") {
+    cue.type = normalizeCueType(value.type);
+  }
+
+  if (typeof value.emoji === "string") {
+    const emoji = normalizeCueEmoji(value.emoji);
+    if (emoji) cue.emoji = emoji;
   }
 
   return cue;
@@ -78,6 +89,8 @@ export function cuesFromCueFile(cueFile: CueFile): Cue[] {
   return cueFile.cues.map((cue) => ({
     time: cue.time,
     text: cue.text,
+    ...(cue.emoji !== undefined ? { emoji: cue.emoji } : {}),
+    ...(cue.type !== undefined ? { type: cue.type } : {}),
     ...(cue.duration !== undefined ? { duration: cue.duration } : {}),
   }));
 }

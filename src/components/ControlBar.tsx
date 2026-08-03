@@ -1,7 +1,5 @@
 import { type ChangeEvent, useRef } from "react";
-import type { ShortcutHandlers } from "../keyboard/shortcuts";
 import { supportsMediaDirectoryPicker } from "../media/loadMediaDirectory";
-import KeyboardShortcutsGuide from "./KeyboardShortcutsGuide";
 
 interface ControlBarProps {
   onLoadShowDirectory: () => Promise<void>;
@@ -22,9 +20,6 @@ interface ControlBarProps {
   canSaveCues: boolean;
   defaultCueDuration: number;
   onDefaultCueDurationChange: (value: number) => void;
-  shortcutHandlers: ShortcutHandlers;
-  shortcutsOpen: boolean;
-  onToggleShortcuts: () => void;
 }
 
 export default function ControlBar({
@@ -46,9 +41,6 @@ export default function ControlBar({
   canSaveCues,
   defaultCueDuration,
   onDefaultCueDurationChange,
-  shortcutHandlers,
-  shortcutsOpen,
-  onToggleShortcuts,
 }: ControlBarProps) {
   const showInputRef = useRef<HTMLInputElement>(null);
 
@@ -141,30 +133,27 @@ export default function ControlBar({
         </button>
       )}
 
-      <label className="footer-duration">
-        <span className="footer-duration__label">Default Cue Duration</span>
-        <input
-          type="number"
-          className="footer-duration__input"
-          min={1}
-          step={1}
-          value={defaultCueDuration}
-          disabled={directorMode}
-          onChange={(event) => {
-            const value = Number(event.target.value);
-            if (!Number.isNaN(value) && value > 0) {
-              onDefaultCueDurationChange(value);
-            }
-          }}
-        />
-        <span className="footer-duration__unit">s</span>
-      </label>
+      {editorMode && (
+        <label className="footer-duration">
+          <span className="footer-duration__label">Default Cue Duration</span>
+          <input
+            type="number"
+            className="footer-duration__input"
+            min={1}
+            step={1}
+            value={defaultCueDuration}
+            disabled={directorMode}
+            onChange={(event) => {
+              const value = Number(event.target.value);
+              if (!Number.isNaN(value) && value > 0) {
+                onDefaultCueDurationChange(value);
+              }
+            }}
+          />
+          <span className="footer-duration__unit">s</span>
+        </label>
+      )}
 
-      <KeyboardShortcutsGuide
-        handlers={shortcutHandlers}
-        open={shortcutsOpen}
-        onToggle={onToggleShortcuts}
-      />
     </footer>
   );
 }

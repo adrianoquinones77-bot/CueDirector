@@ -1,12 +1,16 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import type { Cue } from "../types/cue";
+import ResizeHandle from "./ResizeHandle";
 import {
   getCueEndTime,
   getLivePeriodStart,
   isCueActive,
 } from "../utils/cueTiming";
-import { getCueIconForText, getCueLabel } from "../utils/formatCueText";
+import { getCueDisplayIcon } from "../utils/cueEmoji";
+import { getCueLabel } from "../utils/formatCueText";
 import { getCueWindow } from "../utils/getCueWindow";
+import { blockArrowKeyFocusNavigation } from "../hooks/useVideoSeekShortcuts";
+import AdaptiveCueText from "./AdaptiveCueText";
 
 interface CuePanelProps {
   currentTime: number;
@@ -14,6 +18,15 @@ interface CuePanelProps {
   defaultCueDuration: number;
   onCueSeek: (time: number) => void;
   directorMode: boolean;
+  editorMode: boolean;
+  width: number;
+  directorWidth: number;
+  cueSheetWidth: number;
+  onDirectorResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onEditCue: (index: number) => void;
+  selectedCueIndex: number | null;
+  onSelectCue: (index: number) => void;
+  onCueContextMenu: (index: number, event: React.MouseEvent) => void;
 }
 
 type CueRowVariant = "past" | "current" | "future";
@@ -69,21 +82,23 @@ function getRowIcon(variant: CueRowVariant): string {
 }
 
 function DirectorCueDisplay({
+  cue,
   text,
   className,
 }: {
+  cue?: Cue;
   text?: string;
   className: string;
 }) {
   if (!text) {
     return (
       <div className={`cue-display ${className}`}>
-        <div className="cue-display__text">--</div>
+        <AdaptiveCueText text="--" />
       </div>
     );
   }
 
-  const icon = getCueIconForText(text);
+  const icon = cue ? getCueDisplayIcon(cue) : null;
   const label = getCueLabel(text);
 
   return (
@@ -93,7 +108,7 @@ function DirectorCueDisplay({
           {icon}
         </span>
       )}
-      <div className="cue-display__text">{label}</div>
+      <AdaptiveCueText text={label} />
     </div>
   );
 }
@@ -113,6 +128,15 @@ export default function CuePanel({
   defaultCueDuration,
   onCueSeek,
   directorMode,
+  editorMode,
+  width,
+  directorWidth,
+  cueSheetWidth,
+  onDirectorResizeStart,
+  onEditCue,
+  selectedCueIndex,
+  onSelectCue,
+  onCueContextMenu,
 }: CuePanelProps) {
   const { current, next } = getCueWindow(cues, currentTime, defaultCueDuration);
   const nowText = getNowDisplayText(current, cues);
@@ -159,21 +183,32 @@ export default function CuePanel({
   }, [current?.time]);
 
   return (
-    <aside className="cue-rail">
-      <div className="cue-director">
+    <aside
+      className={`cue-rail${editorMode ? " cue-rail--editor" : " cue-rail--live"}`}
+      style={{ width, flex: `0 0 ${width}px` }}
+    >
+      <div
+        className="cue-director"
+        style={{ width: directorWidth, flex: `0 0 ${directorWidth}px` }}
+      >
         <section className="cue-section cue-section--now">
           <h2 className="cue-section__title">NOW</h2>
-          <DirectorCueDisplay
-            text={nowText}
-            className={`cue current${!current ? " cue--live" : ""}`}
-          />
+          <div className="cue-broadcast-card cue-broadcast-card--now">
+            <DirectorCueDisplay
+              cue={current}
+              text={nowText}
+              className={`cue current${!current ? " cue--live" : ""}`}
+            />
+          </div>
         </section>
 
         <div className="cue-divider" role="separator" />
 
         <section className="cue-section cue-section--next">
           <h2 className="cue-section__title">NEXT</h2>
-          <DirectorCueDisplay text={next?.text} className="cue next" />
+          <div className="cue-broadcast-card cue-broadcast-card--next">
+            <DirectorCueDisplay cue={next} text={next?.text} className="cue next" />
+          </div>
           <div
             className={`cue-countdown${next ? " cue-countdown--active" : ""}`}
           >
@@ -192,9 +227,22 @@ export default function CuePanel({
         </section>
       </div>
 
-      <section className="cue-sheet-panel">
+      <ResizeHandle
+        ariaLabel="Resize NOW/NEXT and cue sheet panels"
+        onPointerDown={onDirectorResizeStart}
+      />
+
+      <section
+        className="cue-sheet-panel"
+        style={{ width: cueSheetWidth, flex: `1 1 ${cueSheetWidth}px` }}
+      >
         <h2 className="cue-section__title">CUE SHEET</h2>
-        <ul ref={listRef} className="cue-sheet-list">
+        <ul
+          ref={listRef}
+          className="cue-sheet-list"
+          aria-label="Cue sheet"
+          onKeyDown={blockArrowKeyFocusNavigation}
+        >
           {cues.map((cue, index) => {
             const variant = getCueRowVariant(
               cue,
@@ -202,18 +250,31 @@ export default function CuePanel({
               defaultCueDuration,
             );
             const isCurrent = variant === "current";
+            const isSelected = editorMode && selectedCueIndex === index;
 
             return (
               <li
                 key={`${cue.time}-${index}`}
                 ref={isCurrent ? currentRowRef : undefined}
-                className={`cue-sheet-item cue-sheet-item--${variant}`}
+                className={`cue-sheet-item cue-sheet-item--${variant}${isSelected ? " cue-sheet-item--selected" : ""}`}
               >
                 <button
                   type="button"
                   className="cue-sheet-item__button"
                   disabled={directorMode}
-                  onClick={() => onCueSeek(cue.time)}
+                  onClick={() => {
+                    if (editorMode) {
+                      onSelectCue(index);
+                    }
+                    onCueSeek(cue.time);
+                  }}
+                  onKeyDown={blockArrowKeyFocusNavigation}
+                  onContextMenu={(event) => {
+                    if (!editorMode) return;
+                    event.preventDefault();
+                    onSelectCue(index);
+                    onCueContextMenu(index, event);
+                  }}
                 >
                   <span className="cue-sheet-item__icon" aria-hidden="true">
                     {getRowIcon(variant)}
@@ -221,10 +282,24 @@ export default function CuePanel({
                   <span className="cue-sheet-item__time">
                     {formatCueSheetTime(cue.time)}
                   </span>
+                  <span className="cue-sheet-item__emoji" aria-hidden="true">
+                    {getCueDisplayIcon(cue)}
+                  </span>
                   <span className="cue-sheet-item__name">
                     {getCueLabel(cue.text)}
                   </span>
                 </button>
+
+                {editorMode && (
+                  <button
+                    type="button"
+                    className="cue-sheet-item__edit"
+                    aria-label={`Edit cue ${getCueLabel(cue.text)}`}
+                    onClick={() => onEditCue(index)}
+                  >
+                    Edit
+                  </button>
+                )}
               </li>
             );
           })}

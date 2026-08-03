@@ -8,6 +8,8 @@ import {
 } from "../types/cueDirectorFile";
 import type { ShowInfo } from "../types/showInfo";
 import { DEFAULT_CUE_DURATION } from "../utils/cueTiming";
+import { normalizeCueEmoji } from "../utils/cueEmoji";
+import { normalizeCueType } from "../utils/cueType";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -62,6 +64,15 @@ function parseCue(value: unknown): Cue | null {
     Number.isFinite(value.duration)
   ) {
     cue.duration = value.duration;
+  }
+
+  if (typeof value.type === "string") {
+    cue.type = normalizeCueType(value.type);
+  }
+
+  if (typeof value.emoji === "string") {
+    const emoji = normalizeCueEmoji(value.emoji);
+    if (emoji) cue.emoji = emoji;
   }
 
   return cue;

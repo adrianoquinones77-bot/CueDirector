@@ -5,6 +5,7 @@ interface PlaylistPanelProps {
   activeIndex: number;
   onSelect: (index: number) => void;
   directorMode: boolean;
+  width: number;
 }
 
 type SongStatus = "completed" | "current" | "upcoming";
@@ -35,11 +36,15 @@ export default function PlaylistPanel({
   activeIndex,
   onSelect,
   directorMode,
+  width,
 }: PlaylistPanelProps) {
   const showProgress = songs.length > 0 && activeIndex >= 0;
 
   return (
-    <aside className="playlist-panel">
+    <aside
+      className="playlist-panel"
+      style={{ width, flex: `0 0 ${width}px` }}
+    >
       <div className="playlist-header">
         <h2 className="playlist-header__title">SHOW</h2>
         {showProgress && (

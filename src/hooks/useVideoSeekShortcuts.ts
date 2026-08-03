@@ -1,0 +1,57 @@
+import { useEffect, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { getVideoSeekDelta } from "../utils/videoSeek";
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+
+  const tagName = target.tagName;
+  return (
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    tagName === "SELECT" ||
+    target.isContentEditable
+  );
+}
+
+/**
+ * Live-mode arrow key video seeking. Runs in capture phase so cue list / button
+ * focus navigation never intercepts arrow keys first.
+ */
+export function useVideoSeekShortcuts(
+  enabled: boolean,
+  onSeekByDelta: (delta: number) => void,
+) {
+  useEffect(() => {
+    if (!enabled) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return;
+
+      const delta = getVideoSeekDelta(event.code, event.shiftKey);
+      if (delta === null) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      onSeekByDelta(delta);
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [enabled, onSeekByDelta]);
+}
+
+/** Block arrow keys from moving focus between cue sheet controls. */
+export function blockArrowKeyFocusNavigation(
+  event: ReactKeyboardEvent,
+): void {
+  if (
+    event.key === "ArrowUp" ||
+    event.key === "ArrowDown" ||
+    event.key === "ArrowLeft" ||
+    event.key === "ArrowRight"
+  ) {
+    event.preventDefault();
+  }
+}

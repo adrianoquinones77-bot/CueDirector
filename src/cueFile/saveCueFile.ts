@@ -13,6 +13,8 @@ export function buildCueFile(song: Song): CueFile {
     cues: song.cues.map((cue) => ({
       time: cue.time,
       text: cue.text,
+      ...(cue.emoji !== undefined ? { emoji: cue.emoji } : {}),
+      ...(cue.type !== undefined ? { type: cue.type } : {}),
       ...(cue.duration !== undefined ? { duration: cue.duration } : {}),
     })),
   };

@@ -1,4 +1,6 @@
 import type { Cue } from "./types/cue";
+import { isEmojiString, normalizeCueEmoji } from "./utils/cueEmoji";
+import { isCueType, normalizeCueType } from "./utils/cueType";
 
 function parseCsvRow(line: string): string[] | null {
   const fields: string[] = [];
@@ -27,13 +29,13 @@ function parseCsvRow(line: string): string[] | null {
   return fields;
 }
 
-function isHeaderRow(time: string, text: string): boolean {
-  const t = time.toLowerCase();
-  const c = text.toLowerCase();
+function isHeaderRow(fields: string[]): boolean {
+  const time = fields[0]?.toLowerCase() ?? "";
+  const text = fields[1]?.toLowerCase() ?? "";
 
   return (
-    t === "time" &&
-    (c === "cue" || c === "action")
+    time === "time" &&
+    (text === "cue" || text === "action" || text === "text")
   );
 }
 
@@ -73,9 +75,9 @@ export function parseCueCsv(content: string): Cue[] {
     const fields = parseCsvRow(line);
     if (!fields) continue;
 
-    const [timeRaw, textRaw, durationRaw] = fields;
+    const [timeRaw, textRaw, ...extraFields] = fields;
 
-    if (isHeaderRow(timeRaw, textRaw)) continue;
+    if (isHeaderRow(fields)) continue;
 
     const time = parseTime(timeRaw);
     const text = textRaw.trim();
@@ -87,11 +89,24 @@ export function parseCueCsv(content: string): Cue[] {
       text,
     };
 
-    if (durationRaw?.trim()) {
-      const duration = Number(durationRaw);
+    for (const rawField of extraFields) {
+      const field = rawField.trim();
+      if (!field) continue;
 
+      const duration = Number(field);
       if (!Number.isNaN(duration) && duration > 0) {
         cue.duration = duration;
+        continue;
+      }
+
+      if (isCueType(field.toLowerCase())) {
+        cue.type = normalizeCueType(field.toLowerCase());
+        continue;
+      }
+
+      const emoji = normalizeCueEmoji(field);
+      if (emoji && isEmojiString(emoji)) {
+        cue.emoji = emoji;
       }
     }
 

@@ -38,7 +38,6 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   function VideoPlayer({ src, onTimeUpdate, onEnded }, ref) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLElement>(null);
-    const instanceIdRef = useRef(Math.random().toString(36).slice(2, 8));
     const seekInProgressRef = useRef(false);
     const lastSeekAtRef = useRef(0);
     const pendingSeekRef = useRef<PendingSeek | null>(null);
@@ -183,11 +182,6 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       const video = videoRef.current;
       if (!video || !src) return;
 
-      console.log("[VideoPlayer] src changed", {
-        instanceId: instanceIdRef.current,
-        src,
-      });
-
       let cancelled = false;
       releaseSeekLock();
       pendingSeekRef.current = null;
@@ -215,20 +209,6 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         pendingSeekRef.current = null;
       };
     }, [src, onTimeUpdate, releaseSeekLock]);
-
-    useEffect(() => {
-      console.log("[VideoPlayer] mounted", {
-        instanceId: instanceIdRef.current,
-      });
-
-      return () => {
-        console.log("[VideoPlayer] unmounted", {
-          instanceId: instanceIdRef.current,
-        });
-        releaseSeekLock();
-        pendingSeekRef.current = null;
-      };
-    }, [releaseSeekLock]);
 
     return (
       <section className="video-panel" ref={containerRef}>

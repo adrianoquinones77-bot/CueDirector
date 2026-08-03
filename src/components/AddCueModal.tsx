@@ -1,14 +1,17 @@
-import { type FormEvent, useEffect, useRef } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
+import { DEFAULT_CUE_EMOJI } from "../utils/cueEmoji";
 import { formatTime } from "../utils/formatTime";
+import CueEmojiInput from "./CueEmojiInput";
 
 interface AddCueModalProps {
   time: number;
-  onSave: (cueName: string) => void;
+  onSave: (cueName: string, emoji: string) => void;
   onCancel: () => void;
 }
 
 export default function AddCueModal({ time, onSave, onCancel }: AddCueModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [emoji, setEmoji] = useState(DEFAULT_CUE_EMOJI);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -29,7 +32,7 @@ export default function AddCueModal({ time, onSave, onCancel }: AddCueModalProps
     event.preventDefault();
     const cueName = inputRef.current?.value.trim() ?? "";
     if (!cueName) return;
-    onSave(cueName);
+    onSave(cueName, emoji.trim() || DEFAULT_CUE_EMOJI);
   };
 
   return (
@@ -54,6 +57,8 @@ export default function AddCueModal({ time, onSave, onCancel }: AddCueModalProps
             autoComplete="off"
           />
         </label>
+
+        <CueEmojiInput value={emoji} onChange={setEmoji} />
 
         <div className="dialog__actions">
           <button type="button" className="dialog__button dialog__button--secondary" onClick={onCancel}>

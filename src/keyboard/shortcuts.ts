@@ -79,16 +79,16 @@ export const KEYBOARD_SHORTCUTS: ShortcutDefinition[] = [
     id: "previousSong",
     category: "playback",
     label: "Previous Song",
-    keys: ["←"],
-    match: matchKey("ArrowLeft"),
+    keys: [","],
+    match: matchKey("Comma"),
     preventDefault: true,
   },
   {
     id: "nextSong",
     category: "playback",
     label: "Next Song",
-    keys: ["→"],
-    match: matchKey("ArrowRight"),
+    keys: ["."],
+    match: matchKey("Period"),
     preventDefault: true,
   },
   {
@@ -113,6 +113,41 @@ export const KEYBOARD_SHORTCUTS: ShortcutDefinition[] = [
     keys: ["?"],
     match: matchKey("Slash", { shiftKey: true }),
     preventDefault: true,
+  },
+];
+
+/** Documented live-mode video seek shortcuts (keyboard handled in App). */
+export interface DisplayShortcut {
+  id: string;
+  category: ShortcutCategory;
+  label: string;
+  keys: string[];
+}
+
+export const VIDEO_SEEK_SHORTCUTS: DisplayShortcut[] = [
+  {
+    id: "seekForwardCoarse",
+    category: "playback",
+    label: "Seek forward 1s",
+    keys: ["→"],
+  },
+  {
+    id: "seekBackwardCoarse",
+    category: "playback",
+    label: "Seek backward 1s",
+    keys: ["←"],
+  },
+  {
+    id: "seekForwardFine",
+    category: "playback",
+    label: "Seek forward 0.1s",
+    keys: ["Shift", "→"],
+  },
+  {
+    id: "seekBackwardFine",
+    category: "playback",
+    label: "Seek backward 0.1s",
+    keys: ["Shift", "←"],
   },
 ];
 

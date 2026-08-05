@@ -11,6 +11,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     watch: {
+      // Polling avoids stale transforms when FSEvents misses editor writes
+      // (which previously left PlaylistPanel stuck on !directorMode gating).
+      usePolling: true,
+      interval: 300,
       ignored: ["**/*.cues", "**/*.mp4", "**/*.csv", "**/*.show", "**/*.cuedirector"],
     },
   },

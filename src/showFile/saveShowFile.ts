@@ -5,8 +5,16 @@ import {
   SHOW_FILE_VERSION,
   type CueDirectorFile,
 } from "../types/cueDirectorFile";
+import type { RuntimeShowMediaItem } from "../types/showMedia";
 import type { ShowInfo } from "../types/showInfo";
 import type { Song } from "../types/song";
+import { toPersistedSongLink } from "../types/songLink";
+import { normalizeSongSetList } from "../types/songSetList";
+import {
+  buildMediaLibraryFromPlaylist,
+  mergeMediaLibraries,
+  toPersistedMediaLibrary,
+} from "./mediaLibrary";
 
 export interface SaveShowInput {
   showInfo: ShowInfo;
@@ -14,6 +22,7 @@ export interface SaveShowInput {
   defaultCueDuration: number;
   timelineZoom: number;
   mediaDirectoryPath?: string;
+  mediaLibrary?: RuntimeShowMediaItem[];
   playlist: Song[];
 }
 
@@ -30,6 +39,13 @@ function getDownloadFilename(showInfo: ShowInfo): string {
 export function buildCueDirectorFile(input: SaveShowInput): CueDirectorFile {
   logShowRestore("Saving .show with media path", input.mediaDirectoryPath ?? "(none)");
 
+  const mediaLibrary = toPersistedMediaLibrary(
+    mergeMediaLibraries(
+      input.mediaLibrary ?? [],
+      buildMediaLibraryFromPlaylist(input.playlist),
+    ),
+  );
+
   return {
     format: SHOW_FILE_FORMAT,
     version: SHOW_FILE_VERSION,
@@ -42,13 +58,20 @@ export function buildCueDirectorFile(input: SaveShowInput): CueDirectorFile {
       zoom: input.timelineZoom,
     },
     mediaDirectoryPath: input.mediaDirectoryPath,
-    playlist: input.playlist.map((song) => ({
-      id: song.id,
-      title: song.title,
-      videoFilename: song.videoFilename,
-      videoRelativePath: song.videoRelativePath,
-      cues: song.cues,
-    })),
+    ...(mediaLibrary.length > 0 ? { mediaLibrary } : {}),
+    playlist: input.playlist.map((song) => {
+      const link = toPersistedSongLink(song.link);
+      const setList = normalizeSongSetList(song.setList);
+      return {
+        id: song.id,
+        title: song.title,
+        videoFilename: song.videoFilename,
+        videoRelativePath: song.videoRelativePath,
+        cues: song.cues,
+        ...(link ? { link } : {}),
+        ...(setList ? { setList } : {}),
+      };
+    }),
   };
 }
 

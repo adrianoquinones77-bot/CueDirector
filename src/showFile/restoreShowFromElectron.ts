@@ -4,7 +4,15 @@ import { parseCueCsv } from "../parseCueCsv";
 import type { ElectronMediaFile } from "../types/electron";
 import type { CueDirectorFile } from "../types/cueDirectorFile";
 import type { Cue } from "../types/cue";
+import {
+  makeMediaId,
+  type RuntimeShowMediaItem,
+} from "../types/showMedia";
 import type { Song } from "../types/song";
+import {
+  buildMediaLibraryFromPlaylist,
+  mergeMediaLibraries,
+} from "./mediaLibrary";
 import {
   getMediaPathCandidates,
   logMediaRestore,
@@ -168,7 +176,7 @@ export async function tryRestoreElectronShow(
     showFile.mediaDirectoryPath?.trim() ??
     "(none)";
 
-  logMediaRestore({ savedPath, hypothesisId: "H1" });
+  logMediaRestore({ savedPath });
 
   const candidates = getMediaPathCandidates(showFile, options?.showFilePath);
   if (options?.preferredMediaPath?.trim()) {
@@ -184,7 +192,6 @@ export async function tryRestoreElectronShow(
       savedPath,
       resolvedPath: candidate,
       exists,
-      hypothesisId: "H2",
     });
 
     if (!exists) continue;
@@ -195,7 +202,6 @@ export async function tryRestoreElectronShow(
       resolvedPath: candidate,
       exists: true,
       missingFiles: result.missingVideoFiles,
-      hypothesisId: "H3",
     });
 
     return {
@@ -211,7 +217,6 @@ export async function tryRestoreElectronShow(
     resolvedPath: "(none)",
     exists: false,
     missingFiles: result.missingVideoFiles,
-    hypothesisId: "H4",
   });
 
   return {
@@ -257,7 +262,6 @@ export async function restoreShowFromElectronDirectory(
         resolvedPath: entry.videoRelativePath ?? entry.videoFilename,
         exists: false,
         videoFilename: entry.videoFilename,
-        hypothesisId: "H5",
       });
       missingVideoFiles.push(entry.videoFilename);
       playlist.push({
@@ -267,6 +271,8 @@ export async function restoreShowFromElectronDirectory(
         videoRelativePath: entry.videoRelativePath,
         videoUrl: "",
         cues: songCues,
+        ...(entry.link ? { link: entry.link } : {}),
+        ...(entry.setList ? { setList: entry.setList } : {}),
       });
       continue;
     }
@@ -279,7 +285,6 @@ export async function restoreShowFromElectronDirectory(
       resolvedPath,
       exists,
       videoFilename: entry.videoFilename,
-      hypothesisId: "H3",
     });
 
     if (!exists) {
@@ -291,6 +296,8 @@ export async function restoreShowFromElectronDirectory(
         videoRelativePath: entry.videoRelativePath,
         videoUrl: "",
         cues: songCues,
+        ...(entry.link ? { link: entry.link } : {}),
+        ...(entry.setList ? { setList: entry.setList } : {}),
       });
       continue;
     }
@@ -304,8 +311,49 @@ export async function restoreShowFromElectronDirectory(
       videoRelativePath: videoFile.relativePath.replace(/\\/g, "/"),
       videoUrl,
       cues: songCues,
+      ...(entry.link ? { link: entry.link } : {}),
+      ...(entry.setList ? { setList: entry.setList } : {}),
     });
   }
+
+  const libraryFromDisk: RuntimeShowMediaItem[] = [];
+  for (const video of videoFiles) {
+    const relativePath = video.relativePath.replace(/\\/g, "/");
+    libraryFromDisk.push({
+      id: makeMediaId(video.name, relativePath),
+      filename: video.name,
+      relativePath,
+      url: await api.pathToFileUrl(video.absolutePath),
+    });
+  }
+
+  for (const saved of showFile.mediaLibrary ?? []) {
+    if (libraryFromDisk.some((item) => item.id === saved.id)) continue;
+    const file =
+      (saved.relativePath &&
+        videosByRelativePath.get(saved.relativePath.replace(/\\/g, "/").toLowerCase())) ||
+      videosByFilename.get(saved.filename.toLowerCase());
+    if (!file) {
+      missingVideoFiles.push(saved.filename);
+      continue;
+    }
+    const exists = await api.pathExists(file.absolutePath);
+    if (!exists) {
+      missingVideoFiles.push(saved.filename);
+      continue;
+    }
+    libraryFromDisk.push({
+      id: saved.id,
+      filename: file.name,
+      relativePath: file.relativePath.replace(/\\/g, "/"),
+      url: await api.pathToFileUrl(file.absolutePath),
+    });
+  }
+
+  const mediaLibrary = mergeMediaLibraries(
+    libraryFromDisk,
+    buildMediaLibraryFromPlaylist(playlist),
+  );
 
   logShowRestore("Missing videos after restore", missingVideoFiles);
 
@@ -314,6 +362,7 @@ export async function restoreShowFromElectronDirectory(
     preferences: showFile.preferences,
     timeline: showFile.timeline ?? { zoom: 1 },
     playlist,
-    missingVideoFiles,
+    mediaLibrary,
+    missingVideoFiles: [...new Set(missingVideoFiles)],
   };
 }

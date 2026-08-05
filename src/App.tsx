@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } fr
 import "./App.css";
 import AddCueModal from "./components/AddCueModal";
 import ConfirmDeleteCueDialog from "./components/ConfirmDeleteCueDialog";
+import ConfirmDeleteSongDialog from "./components/ConfirmDeleteSongDialog";
 import ControlBar from "./components/ControlBar";
+import CreatePinDialog from "./components/CreatePinDialog";
 import CueContextMenu from "./components/CueContextMenu";
 import CuePanel from "./components/CuePanel";
 import CueTimeline from "./components/CueTimeline";
@@ -11,8 +13,13 @@ import Header from "./components/Header";
 import MenuBar from "./components/MenuBar";
 import MissingFilesDialog from "./components/MissingFilesDialog";
 import OpenShowErrorDialog from "./components/OpenShowErrorDialog";
+import LiveLockShield from "./components/LiveLockShield";
+import PerformanceLockScreen from "./components/PerformanceLockScreen";
 import PlaylistPanel from "./components/PlaylistPanel";
 import ResizeHandle from "./components/ResizeHandle";
+import SetListPage from "./components/SetListPage";
+import ShowReadyChecklistModal from "./components/ShowReadyChecklistModal";
+import Toast, { type ToastMessage } from "./components/Toast";
 import VideoPlayer, {
   type VideoPlayerHandle,
 } from "./components/VideoPlayer.tsx";
@@ -22,6 +29,29 @@ import { useVideoSeekShortcuts } from "./hooks/useVideoSeekShortcuts";
 import { usePanelLayout } from "./hooks/usePanelLayout";
 import { useShowDirector } from "./hooks/useShowDirector";
 import type { ShortcutHandlers } from "./keyboard/shortcuts";
+import { getPlaybackTime } from "./playback/playbackClock";
+import {
+  endShowClock,
+  resetShowClock,
+  startShowClock,
+  useShowLive,
+  useShowSessionActive,
+} from "./playback/showClock";
+import {
+  hasPerformancePin,
+  savePerformancePin,
+} from "./session/performancePinStorage";
+import {
+  createCue,
+  logNewCueCreated,
+  logPlayCue,
+  sanitizeCueTime,
+} from "./utils/createCue";
+import type { Cue } from "./types/cue";
+import {
+  buildMediaLibraryFromPlaylist,
+  mergeMediaLibraries,
+} from "./showFile/mediaLibrary";
 
 function App() {
   const videoPlayerRef = useRef<VideoPlayerHandle>(null);
@@ -30,6 +60,7 @@ function App() {
   const [editCueIndex, setEditCueIndex] = useState<number | null>(null);
   const [selectedCueIndex, setSelectedCueIndex] = useState<number | null>(null);
   const [deleteCueIndex, setDeleteCueIndex] = useState<number | null>(null);
+  const [deleteSongId, setDeleteSongId] = useState<string | null>(null);
   const [cueContextMenu, setCueContextMenu] = useState<{
     x: number;
     y: number;
@@ -39,14 +70,35 @@ function App() {
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [isRelinkingMedia, setIsRelinkingMedia] = useState(false);
   const [videoDuration, setVideoDuration] = useState(0);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [performanceLocked, setPerformanceLocked] = useState(false);
+  const [createPinOpen, setCreatePinOpen] = useState(false);
+  const [appView, setAppView] = useState<"director" | "setlist">("director");
+  const [showReadyChecklistOpen, setShowReadyChecklistOpen] = useState(false);
+  /** PIN accepted on PerformanceLockScreen should open checklist, not unlock. */
+  const [showReadyAwaitingPin, setShowReadyAwaitingPin] = useState(false);
+  /**
+   * After START SHOW — stay locked without showing the PIN card again.
+   * Kept as React state (not only showClock) so hideCard never flashes false.
+   */
+  const [liveLockedMode, setLiveLockedMode] = useState(false);
+  /** Intentional unlock UI via Lock menu — never shown automatically after START SHOW. */
+  const [unlockPromptOpen, setUnlockPromptOpen] = useState(false);
+  const [lockIntent, setLockIntent] = useState<"lock" | "show-ready" | null>(
+    null,
+  );
+  const toastIdRef = useRef(0);
 
   const {
-    currentTime,
     cues,
     playlist,
+    mediaLibrary,
     activeSongIndex,
     activeVideoSrc,
-    selectSong,
+    selectMedia,
+    linkSongs,
+    breakSongLink,
+    deleteSong,
     loadShow,
     loadShowDirectory,
     saveShow,
@@ -59,6 +111,8 @@ function App() {
     missingVideoFiles,
     dismissMissingVideoFiles,
     relinkMediaFolder,
+    addVideosToLibrary,
+    prepareCueVideo,
     openShowError,
     dismissOpenShowError,
     saveCueError,
@@ -80,6 +134,8 @@ function App() {
     setDefaultCueDuration,
     showInfo,
     updateShowInfo,
+    updateSongSetList,
+    recordActiveSongDuration,
     canGoPrevious,
     canGoNext,
     canSaveShow,
@@ -90,6 +146,18 @@ function App() {
     getMediaDirectoryPath,
     getShowFilePath,
   } = useShowDirector();
+
+  const activeSong =
+    activeSongIndex >= 0 ? playlist[activeSongIndex] : undefined;
+
+  const sidebarMediaItems = useMemo(
+    () =>
+      mergeMediaLibraries(
+        mediaLibrary,
+        buildMediaLibraryFromPlaylist(playlist),
+      ),
+    [mediaLibrary, playlist],
+  );
 
   const handleRestoreSession = useCallback(
     async (session: Parameters<typeof restoreFromSession>[0]) => {
@@ -104,6 +172,8 @@ function App() {
 
   const handleClearLastShow = useCallback(async () => {
     await clearPersistedShow();
+    resetShowClock();
+    setLiveLockedMode(false);
     setTimelineZoom(1);
   }, [clearPersistedShow]);
 
@@ -112,19 +182,78 @@ function App() {
     setTimelineZoom(zoom);
   }, []);
 
+  const showToast = useCallback((tone: ToastMessage["tone"], message: string) => {
+    toastIdRef.current += 1;
+    setToast({ id: toastIdRef.current, tone, message });
+  }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    setToast((current) => (current?.id === id ? null : current));
+  }, []);
+
+  const handleSaveShow = useCallback(() => {
+    const saved = saveShow(timelineZoom);
+    if (saved) {
+      showToast("success", "Show saved");
+    } else {
+      showToast("error", "Could not save show");
+    }
+  }, [saveShow, showToast, timelineZoom]);
+
+  const handleSaveCues = useCallback(async () => {
+    const saved = await saveCues();
+    if (saved) {
+      showToast("success", "Cues saved successfully");
+    } else {
+      showToast("error", "Could not save cues");
+    }
+  }, [saveCues, showToast]);
+
   useEffect(() => {
     setVideoDuration(0);
   }, [activeVideoSrc]);
 
-  const handleVideoDurationChange = useCallback((duration: number) => {
-    setVideoDuration(duration);
-  }, []);
+  const handleVideoDurationChange = useCallback(
+    (duration: number) => {
+      setVideoDuration(duration);
+      recordActiveSongDuration(duration);
+    },
+    [recordActiveSongDuration],
+  );
+
+  const handleSetListDisplayNameChange = useCallback(
+    (songId: string, displayName: string) => {
+      updateSongSetList(songId, { displayName });
+    },
+    [updateSongSetList],
+  );
+
+  const handleSetListMedleyPartsChange = useCallback(
+    (songId: string, parts: string[]) => {
+      updateSongSetList(songId, { parts });
+    },
+    [updateSongSetList],
+  );
 
   const handleShowRestored = useCallback(
     (timelineZoom?: number) => {
+      resetShowClock();
+      setLiveLockedMode(false);
       applyRestoredTimelineZoom(timelineZoom);
     },
     [applyRestoredTimelineZoom],
+  );
+
+  const handleOpenShowFile = useCallback(
+    async (file: File) => {
+      const opened = await openShowFile(file);
+      if (opened) {
+        resetShowClock();
+        setLiveLockedMode(false);
+      }
+      return opened;
+    },
+    [openShowFile],
   );
 
   useLastShowPersistence({
@@ -132,13 +261,25 @@ function App() {
     autoAdvance,
     defaultCueDuration,
     playlist,
+    mediaLibrary,
     activeSongIndex,
-    currentTime,
     timelineZoom,
     getMediaDirectoryPath,
     getShowFilePath,
     onRestore: handleRestoreSession,
   });
+
+  const handleAddVideosToLibrary = useCallback(async () => {
+    const added = await addVideosToLibrary();
+    if (added > 0) {
+      showToast(
+        "success",
+        added === 1
+          ? "Added 1 video to library"
+          : `Added ${added} videos to library`,
+      );
+    }
+  }, [addVideosToLibrary, showToast]);
 
   const handleRelinkMediaFolder = useCallback(async () => {
     setIsRelinkingMedia(true);
@@ -157,6 +298,7 @@ function App() {
       setEditCueIndex(null);
       setSelectedCueIndex(null);
       setDeleteCueIndex(null);
+      setDeleteSongId(null);
       setCueContextMenu(null);
     }
   }, [editorMode]);
@@ -171,6 +313,18 @@ function App() {
     videoPlayerRef.current?.togglePlayPause();
   }, []);
 
+  /** Manual song pick: always reset to the start so Play can restart any song. */
+  const handleSelectMedia = useCallback(
+    (mediaId: string) => {
+      selectMedia(mediaId);
+      // Defer until after React applies the new active source.
+      queueMicrotask(() => {
+        videoPlayerRef.current?.restartFromStart(false);
+      });
+    },
+    [selectMedia],
+  );
+
   const handleToggleFullscreen = useCallback(() => {
     videoPlayerRef.current?.toggleFullscreen();
   }, []);
@@ -179,29 +333,123 @@ function App() {
     videoPlayerRef.current?.exitFullscreen();
   }, []);
 
-  const handleCueSeek = useCallback((time: number) => {
-    videoPlayerRef.current?.seekTo(time);
-  }, []);
+  const handleCueSeek = useCallback(
+    (time: number, cue?: Cue) => {
+      const seekTime = sanitizeCueTime(time);
+      logPlayCue(
+        cue ?? { time, text: "(unknown)", emoji: undefined },
+        seekTime ?? Number.NaN,
+        activeVideoSrc,
+      );
+
+      if (seekTime === null) {
+        console.error("[PLAY CUE] aborted: invalid seek time", time);
+        return;
+      }
+
+      if (cue) {
+        const wasPlaying = !(videoPlayerRef.current?.isPaused() ?? true);
+        const { url, didChange } = prepareCueVideo(cue);
+
+        if (!url && !activeVideoSrc) {
+          console.error("[PLAY CUE] aborted: no video reference");
+          return;
+        }
+
+        if (didChange) {
+          videoPlayerRef.current?.prepareSeekAfterLoad(seekTime, wasPlaying);
+          return;
+        }
+      }
+
+      if (!activeVideoSrc) {
+        console.error("[PLAY CUE] aborted: no video reference");
+        return;
+      }
+
+      videoPlayerRef.current?.seekTo(seekTime);
+    },
+    [activeVideoSrc, prepareCueVideo],
+  );
 
   const handleVideoEnded = useCallback(() => {
-    const advanced = advanceOnVideoEnd();
-    if (advanced) {
+    const result = advanceOnVideoEnd();
+
+    if (result.advanced) {
+      if (result.autoPlay) {
+        // Linked medley: load next song and continue playback automatically.
+        videoPlayerRef.current?.prepareSeekAfterLoad(0, true);
+        return;
+      }
+
+      // Classic auto-advance: land on the next song paused at the start.
+      videoPlayerRef.current?.prepareSeekAfterLoad(0, false);
       videoPlayerRef.current?.pause();
+      return;
     }
+
+    // End of chain / no advance: rewind so this song stays manually replayable.
+    videoPlayerRef.current?.seekTo(0);
   }, [advanceOnVideoEnd]);
 
   const handleAddCueClick = useCallback(() => {
-    const time = videoPlayerRef.current?.getCurrentTime() ?? currentTime;
+    const rawTime =
+      videoPlayerRef.current?.getCurrentTime() ?? getPlaybackTime();
+    const time = sanitizeCueTime(rawTime);
+    if (time === null) {
+      console.error("[NEW CUE CREATED] aborted: invalid capture time", rawTime);
+      return;
+    }
     setAddCueTime(time);
-  }, [currentTime]);
+  }, []);
 
   const handleSaveCue = useCallback(
-    (cueName: string, emoji: string) => {
+    (
+      cueName: string,
+      emoji: string,
+      type?: Cue["type"],
+      important?: boolean,
+    ) => {
       if (addCueTime === null) return;
-      addCue({ time: addCueTime, text: cueName, emoji });
+
+      const cue = createCue({
+        time: addCueTime,
+        text: cueName,
+        emoji,
+        type,
+        important,
+      });
+
+      if (!cue) {
+        console.error("[NEW CUE CREATED] aborted: invalid cue data", {
+          time: addCueTime,
+          text: cueName,
+          emoji,
+        });
+        return;
+      }
+
+      logNewCueCreated(cue);
+      addCue(cue);
       setAddCueTime(null);
     },
     [addCue, addCueTime],
+  );
+
+  const handleToggleCueImportant = useCallback(
+    (index: number) => {
+      const cue = cues[index];
+      if (!cue) return;
+
+      if (cue.important === true) {
+        const { important: _removed, ...rest } = cue;
+        updateCue(index, rest);
+        return;
+      }
+
+      updateCue(index, { ...cue, important: true });
+    },
+    [cues, updateCue],
   );
 
   const handleCancelAddCue = useCallback(() => {
@@ -222,7 +470,9 @@ function App() {
     (index: number, time: number) => {
       const cue = cues[index];
       if (!cue) return;
-      updateCue(index, { ...cue, time });
+      const nextTime = sanitizeCueTime(time);
+      if (nextTime === null) return;
+      updateCue(index, { ...cue, time: nextTime });
     },
     [cues, updateCue],
   );
@@ -263,10 +513,38 @@ function App() {
     setDeleteCueIndex(null);
   }, []);
 
+  const handleRequestDeleteSong = useCallback((songId: string) => {
+    if (!editorMode) return;
+    setDeleteSongId(songId);
+  }, [editorMode]);
+
+  const handleConfirmDeleteSong = useCallback(() => {
+    if (deleteSongId === null) return;
+    const deleted = deleteSong(deleteSongId);
+    setDeleteSongId(null);
+    if (deleted) {
+      setSelectedCueIndex(null);
+      setEditCueIndex(null);
+      setDeleteCueIndex(null);
+      setCueContextMenu(null);
+      showToast("success", "Song removed from show");
+    }
+  }, [deleteSong, deleteSongId, showToast]);
+
+  const handleCancelDeleteSong = useCallback(() => {
+    setDeleteSongId(null);
+  }, []);
+
   const handleSaveEditedCue = useCallback(
-    (cue: { time: number; text: string }) => {
+    (cue: Cue) => {
       if (editCueIndex === null) return;
-      updateCue(editCueIndex, cue);
+      const sanitized = createCue(cue);
+      if (!sanitized) {
+        console.error("[NEW CUE CREATED] aborted: invalid edited cue", cue);
+        return;
+      }
+      logNewCueCreated(sanitized);
+      updateCue(editCueIndex, sanitized);
       setEditCueIndex(null);
     },
     [editCueIndex, updateCue],
@@ -325,25 +603,188 @@ function App() {
     player.seekTo(player.getCurrentTime() + delta);
   }, []);
 
-  const shortcutHandlers = useMemo<ShortcutHandlers>(
+  const engagePerformanceLock = useCallback(() => {
+    videoPlayerRef.current?.pause();
+    setShortcutsOpen(false);
+    setCreatePinOpen(false);
+    setAddCueTime(null);
+    setEditCueIndex(null);
+    setDeleteCueIndex(null);
+    setCueContextMenu(null);
+    setPerformanceLocked(true);
+  }, []);
+
+  const handleLockShow = useCallback(() => {
+    // Already locked (e.g. live): Lock button intentionally opens PIN to unlock.
+    if (performanceLocked) {
+      setUnlockPromptOpen(true);
+      return;
+    }
+
+    setLockIntent("lock");
+    if (!hasPerformancePin()) {
+      setCreatePinOpen(true);
+      return;
+    }
+
+    engagePerformanceLock();
+    setLockIntent(null);
+  }, [engagePerformanceLock, performanceLocked]);
+
+  /** Opens the existing Show Ready checklist modal. */
+  const openShowReadyChecklist = useCallback(() => {
+    setShowReadyAwaitingPin(false);
+    setShowReadyChecklistOpen(true);
+  }, []);
+
+  const handleShowReady = useCallback(() => {
+    setAppView("director");
+
+    if (showReadyChecklistOpen || showReadyAwaitingPin || createPinOpen) {
+      return;
+    }
+
+    setLockIntent("show-ready");
+
+    if (!hasPerformancePin()) {
+      setCreatePinOpen(true);
+      return;
+    }
+
+    setShowReadyAwaitingPin(true);
+    if (!performanceLocked) {
+      engagePerformanceLock();
+    }
+  }, [
+    createPinOpen,
+    engagePerformanceLock,
+    performanceLocked,
+    showReadyAwaitingPin,
+    showReadyChecklistOpen,
+  ]);
+
+  const handleCreatePin = useCallback(
+    (pin: string) => {
+      savePerformancePin(pin);
+      setCreatePinOpen(false);
+
+      if (lockIntent === "show-ready") {
+        setLockIntent(null);
+        engagePerformanceLock();
+        openShowReadyChecklist();
+        return;
+      }
+
+      engagePerformanceLock();
+      setLockIntent(null);
+    },
+    [engagePerformanceLock, lockIntent, openShowReadyChecklist],
+  );
+
+  const handleUnlockShow = useCallback(() => {
+    // Show Ready: password accepted on Lock Screen → open checklist, stay locked.
+    if (showReadyAwaitingPin) {
+      setUnlockPromptOpen(false);
+      openShowReadyChecklist();
+      return;
+    }
+
+    setShowReadyChecklistOpen(false);
+    setShowReadyAwaitingPin(false);
+    setLiveLockedMode(false);
+    setUnlockPromptOpen(false);
+    setLockIntent(null);
+    setPerformanceLocked(false);
+  }, [openShowReadyChecklist, showReadyAwaitingPin]);
+
+  const handleToggleShortcuts = useCallback(() => {
+    setShortcutsOpen((open) => !open);
+  }, []);
+
+  const showLive = useShowLive();
+  const showSessionActive = useShowSessionActive();
+
+  const handleStartShow = useCallback(() => {
+    // Locked + Checklist → Locked + Live (transparent blur only). No PIN / lock UI.
+    startShowClock();
+    setLiveLockedMode(true);
+    setUnlockPromptOpen(false);
+    setShowReadyAwaitingPin(false);
+    setShowReadyChecklistOpen(false);
+    setAppView("director");
+  }, []);
+
+  const handleEndShow = useCallback(() => {
+    endShowClock();
+    setLiveLockedMode(false);
+  }, []);
+
+  const handleResetShowTimer = useCallback(() => {
+    resetShowClock();
+    setLiveLockedMode(false);
+  }, []);
+
+  const handleToggleAutoAdvance = useCallback(() => {
+    setAutoAdvance((value) => !value);
+  }, [setAutoAdvance]);
+
+  const handleToggleDirectorMode = useCallback(() => {
+    setDirectorMode((value) => !value);
+  }, [setDirectorMode]);
+
+  const handleToggleEditorMode = useCallback(() => {
+    setEditorMode((value) => !value);
+  }, [setEditorMode]);
+
+  // Normalize show fields so the lock screen never receives undefined values.
+  const lockShowInfo = useMemo(
     () => ({
+      showName: showInfo?.showName ?? "",
+      venue: showInfo?.venue ?? "",
+      city: showInfo?.city ?? "",
+      country: showInfo?.country ?? "",
+      date: showInfo?.date ?? "",
+      artist: showInfo?.artist ?? "",
+      director: showInfo?.director ?? "",
+    }),
+    [showInfo],
+  );
+
+  const shortcutHandlers = useMemo<ShortcutHandlers>(() => {
+    // PIN / checklist lock: no shortcuts. Live locked: Director transport stays on.
+    if (performanceLocked && !liveLockedMode) {
+      return {};
+    }
+
+    // Director / live: Space is always global transport (any panel focus).
+    // Editor keeps the same Space binding so play/pause stays available.
+    return {
       playPause: handlePlayPause,
       previousSong: goToPreviousSong,
       nextSong: goToNextSong,
       fullscreen: handleToggleFullscreen,
       exitFullscreen: handleExitFullscreen,
-      toggleShortcuts: () => setShortcutsOpen((open) => !open),
-    }),
-    [
-      handlePlayPause,
-      goToPreviousSong,
-      goToNextSong,
-      handleToggleFullscreen,
-      handleExitFullscreen,
-    ],
-  );
+      toggleShortcuts: handleToggleShortcuts,
+      lockShow: handleLockShow,
+    };
+  }, [
+    performanceLocked,
+    liveLockedMode,
+    handlePlayPause,
+    goToPreviousSong,
+    goToNextSong,
+    handleToggleFullscreen,
+    handleExitFullscreen,
+    handleToggleShortcuts,
+    handleLockShow,
+  ]);
 
-  useVideoSeekShortcuts(!editorMode, handleVideoSeekByDelta);
+  // Arrow seeking stays off in Editor Mode; Space transport stays on via shortcuts.
+  // Live locked mode keeps seek shortcuts (global Director operation).
+  useVideoSeekShortcuts(
+    !editorMode && (!performanceLocked || liveLockedMode),
+    handleVideoSeekByDelta,
+  );
 
   useKeyboardShortcuts(shortcutHandlers);
 
@@ -351,129 +792,183 @@ function App() {
     setEditCueIndex(null);
   }, []);
 
+  const canAddCue = activeSongIndex >= 0 || playlist.length === 0;
+
   const editingCue =
     editCueIndex !== null ? cues[editCueIndex] : undefined;
   const deletingCue =
     deleteCueIndex !== null ? cues[deleteCueIndex] : undefined;
+  const deletingSong =
+    deleteSongId !== null
+      ? playlist.find((song) => song.id === deleteSongId)
+      : undefined;
 
   return (
-    <div className={`app${editorMode ? " app--editor" : " app--live"}`}>
+    <div
+      className={`app${editorMode ? " app--editor" : " app--live"}${
+        performanceLocked ? " app--performance-locked" : ""
+      }`}
+    >
       <MenuBar
-        onSaveShow={() => saveShow(timelineZoom)}
-        onOpenShowFile={openShowFile}
+        onSaveShow={handleSaveShow}
+        onOpenShowFile={handleOpenShowFile}
         onTryAutoRestorePendingShow={tryAutoRestorePendingShow}
         onConnectMediaPath={connectMediaPath}
         onConnectMediaDirectory={connectMediaDirectory}
         onConnectMediaFolder={connectMediaFolder}
         onCancelOpenShow={cancelOpenShow}
         onClearLastShow={handleClearLastShow}
+        onAddVideosToLibrary={handleAddVideosToLibrary}
+        onLockShow={handleLockShow}
+        onShowReady={handleShowReady}
+        onEndShow={handleEndShow}
+        onResetShowTimer={handleResetShowTimer}
         onShowRestored={handleShowRestored}
         canSaveShow={canSaveShow}
+        canAddVideos={!directorMode}
         directorMode={directorMode}
+        performanceLocked={performanceLocked}
+        showLive={showLive}
+        canResetShowTimer={showSessionActive}
+        showReadyActive={
+          showReadyAwaitingPin ||
+          showReadyChecklistOpen ||
+          lockIntent === "show-ready"
+        }
+        workspace={appView}
+        onWorkspaceChange={setAppView}
       />
 
-      <Header
-        currentTime={currentTime}
-        showInfo={showInfo}
-        onShowInfoChange={updateShowInfo}
-        activeSongIndex={activeSongIndex}
-        totalSongs={playlist.length}
-        directorMode={directorMode}
-        editorMode={editorMode}
-        shortcutHandlers={shortcutHandlers}
-        shortcutsOpen={shortcutsOpen}
-        onToggleShortcuts={() => setShortcutsOpen((open) => !open)}
-      />
-
-      <main
-        className={`content${editorMode ? " content--editor" : " content--live"}`}
-        ref={contentRef}
+      {/* Keep Director workspace mounted so switching never interrupts playback. */}
+      <div
+        className={`app-view${appView === "director" ? "" : " app-view--hidden"}`}
+        aria-hidden={appView !== "director"}
       >
-        <PlaylistPanel
-          songs={playlist}
-          activeIndex={activeSongIndex}
-          onSelect={selectSong}
+        <Header
+          showInfo={showInfo}
+          onShowInfoChange={updateShowInfo}
+          activeSongIndex={activeSongIndex}
+          totalSongs={playlist.length}
           directorMode={directorMode}
-          width={panelLayout.playlistWidth}
+          editorMode={editorMode}
+          shortcutHandlers={shortcutHandlers}
+          shortcutsOpen={shortcutsOpen}
+          onToggleShortcuts={handleToggleShortcuts}
         />
 
-        <ResizeHandle
-          ariaLabel="Resize playlist panel"
-          onPointerDown={panelLayout.onPlaylistResizeStart}
-        />
+        <main
+          className={`content${editorMode ? " content--editor" : " content--live"}`}
+          ref={contentRef}
+        >
+          <PlaylistPanel
+            mediaItems={sidebarMediaItems}
+            playlist={playlist}
+            activeSongIndex={activeSongIndex}
+            onSelectMedia={handleSelectMedia}
+            onAddVideo={handleAddVideosToLibrary}
+            onLinkSongs={linkSongs}
+            onBreakSongLink={breakSongLink}
+            onRequestDeleteSong={handleRequestDeleteSong}
+            directorMode={directorMode}
+            editorMode={editorMode}
+            width={panelLayout.playlistWidth}
+          />
 
-        <div className="video-column">
-          <div className="video-column__player">
-            <VideoPlayer
-              ref={videoPlayerRef}
-              src={activeVideoSrc}
-              onTimeUpdate={handleTimeUpdate}
-              onDurationChange={handleVideoDurationChange}
-              onEnded={handleVideoEnded}
+          <ResizeHandle
+            ariaLabel="Resize playlist panel"
+            onPointerDown={panelLayout.onPlaylistResizeStart}
+          />
+
+          <div className="video-column">
+            <div className="video-column__player">
+              <VideoPlayer
+                ref={videoPlayerRef}
+                src={activeVideoSrc}
+                onTimeUpdate={handleTimeUpdate}
+                onDurationChange={handleVideoDurationChange}
+                onEnded={handleVideoEnded}
+              />
+            </div>
+
+            <CueTimeline
+              cues={cues}
+              defaultCueDuration={defaultCueDuration}
+              videoPlayerRef={videoPlayerRef}
+              videoSrc={activeVideoSrc}
+              videoDuration={videoDuration}
+              directorMode={directorMode}
+              editorMode={editorMode}
+              selectedCueIndex={editorMode ? selectedCueIndex : null}
+              onSelectCue={editorMode ? handleSelectCue : undefined}
+              onCueContextMenu={editorMode ? handleCueContextMenu : undefined}
+              onUpdateCueTime={editorMode ? handleUpdateCueTime : undefined}
+              onCueSeek={handleCueSeek}
+              timelineZoom={timelineZoom}
+              onTimelineZoomChange={setTimelineZoom}
             />
           </div>
 
-          <CueTimeline
+          <ResizeHandle
+            ariaLabel="Resize cue panel"
+            onPointerDown={panelLayout.onCueRailResizeStart}
+          />
+
+          <CuePanel
             cues={cues}
-            currentTime={currentTime}
             defaultCueDuration={defaultCueDuration}
+            onCueSeek={handleCueSeek}
             videoPlayerRef={videoPlayerRef}
-            videoSrc={activeVideoSrc}
-            videoDuration={videoDuration}
             directorMode={directorMode}
             editorMode={editorMode}
+            width={panelLayout.cueRailWidth}
+            directorWidth={panelLayout.directorWidth}
+            cueSheetWidth={panelLayout.cueSheetWidth}
+            onDirectorResizeStart={panelLayout.onDirectorResizeStart}
+            onEditCue={handleEditCue}
             selectedCueIndex={editorMode ? selectedCueIndex : null}
-            onSelectCue={editorMode ? handleSelectCue : undefined}
-            onCueContextMenu={editorMode ? handleCueContextMenu : undefined}
-            onUpdateCueTime={editorMode ? handleUpdateCueTime : undefined}
-            timelineZoom={timelineZoom}
-            onTimelineZoomChange={setTimelineZoom}
+            onSelectCue={handleSelectCue}
+            onCueContextMenu={handleCueContextMenu}
+            onToggleImportant={handleToggleCueImportant}
           />
-        </div>
+        </main>
 
-        <ResizeHandle
-          ariaLabel="Resize cue panel"
-          onPointerDown={panelLayout.onCueRailResizeStart}
-        />
-
-        <CuePanel
-          currentTime={currentTime}
-          cues={cues}
-          defaultCueDuration={defaultCueDuration}
-          onCueSeek={handleCueSeek}
+        <ControlBar
+          onLoadShowDirectory={loadShowDirectory}
+          onLoadShow={loadShow}
+          onPlayPause={handlePlayPause}
+          onPrevious={goToPreviousSong}
+          onNext={goToNextSong}
+          canGoPrevious={canGoPrevious}
+          canGoNext={canGoNext}
+          autoAdvance={autoAdvance}
+          onToggleAutoAdvance={handleToggleAutoAdvance}
           directorMode={directorMode}
+          onToggleDirectorMode={handleToggleDirectorMode}
           editorMode={editorMode}
-          width={panelLayout.cueRailWidth}
-          directorWidth={panelLayout.directorWidth}
-          cueSheetWidth={panelLayout.cueSheetWidth}
-          onDirectorResizeStart={panelLayout.onDirectorResizeStart}
-          onEditCue={handleEditCue}
-          selectedCueIndex={editorMode ? selectedCueIndex : null}
-          onSelectCue={handleSelectCue}
-          onCueContextMenu={handleCueContextMenu}
+          onToggleEditorMode={handleToggleEditorMode}
+          onAddCue={handleAddCueClick}
+          canAddCue={canAddCue}
+          onSaveCues={handleSaveCues}
+          canSaveCues={canSaveCues}
+          defaultCueDuration={defaultCueDuration}
+          onDefaultCueDurationChange={setDefaultCueDuration}
         />
-      </main>
+      </div>
 
-      <ControlBar
-        onLoadShowDirectory={loadShowDirectory}
-        onLoadShow={loadShow}
-        onPrevious={goToPreviousSong}
-        onNext={goToNextSong}
-        canGoPrevious={canGoPrevious}
-        canGoNext={canGoNext}
-        autoAdvance={autoAdvance}
-        onToggleAutoAdvance={() => setAutoAdvance((value) => !value)}
-        directorMode={directorMode}
-        onToggleDirectorMode={() => setDirectorMode((value) => !value)}
-        editorMode={editorMode}
-        onToggleEditorMode={() => setEditorMode((value) => !value)}
-        onAddCue={handleAddCueClick}
-        canAddCue={activeSongIndex >= 0 || playlist.length === 0}
-        onSaveCues={saveCues}
-        canSaveCues={canSaveCues}
-        defaultCueDuration={defaultCueDuration}
-        onDefaultCueDurationChange={setDefaultCueDuration}
-      />
+      {appView === "setlist" && (
+        <main className="content content--set-list">
+          <SetListPage
+            showInfo={showInfo}
+            playlist={playlist}
+            activeSongIndex={activeSongIndex}
+            showCompletion={!editorMode}
+            onShowInfoChange={updateShowInfo}
+            onDisplayNameChange={handleSetListDisplayNameChange}
+            onMedleyPartsChange={handleSetListMedleyPartsChange}
+            readOnly={performanceLocked}
+          />
+        </main>
+      )}
 
       {missingVideoFiles.length > 0 && (
         <MissingFilesDialog
@@ -499,7 +994,63 @@ function App() {
         />
       )}
 
-      {editorMode && addCueTime !== null && (
+      <Toast toast={toast} onDismiss={dismissToast} />
+
+      {createPinOpen && (
+        <CreatePinDialog
+          onSave={handleCreatePin}
+          onCancel={() => {
+            setCreatePinOpen(false);
+            setLockIntent(null);
+            setShowReadyAwaitingPin(false);
+          }}
+        />
+      )}
+
+      {/* PIN entry (Show Ready auth or intentional unlock) — blur + card. */}
+      {performanceLocked &&
+        (showReadyAwaitingPin || unlockPromptOpen) && (
+          <PerformanceLockScreen
+            showInfo={lockShowInfo}
+            onUnlock={handleUnlockShow}
+            hideCard={false}
+          />
+        )}
+
+      {/* Checklist phase — blur only, no card. */}
+      {performanceLocked &&
+        showReadyChecklistOpen &&
+        !unlockPromptOpen && (
+          <PerformanceLockScreen
+            showInfo={lockShowInfo}
+            onUnlock={handleUnlockShow}
+            hideCard
+          />
+        )}
+
+      {/* Live locked — no blur/overlay chrome; click anywhere → unlock dialog. */}
+      {performanceLocked && liveLockedMode && !unlockPromptOpen && (
+        <LiveLockShield onRequestUnlock={() => setUnlockPromptOpen(true)} />
+      )}
+
+      {/* Regular Lock (not Show Ready / not live): unlock card immediately. */}
+      {performanceLocked &&
+        !liveLockedMode &&
+        !showReadyChecklistOpen &&
+        !showReadyAwaitingPin &&
+        !unlockPromptOpen && (
+          <PerformanceLockScreen
+            showInfo={lockShowInfo}
+            onUnlock={handleUnlockShow}
+            hideCard={false}
+          />
+        )}
+
+      {showReadyChecklistOpen && (
+        <ShowReadyChecklistModal onStartShow={handleStartShow} />
+      )}
+
+      {editorMode && addCueTime !== null && !performanceLocked && (
         <AddCueModal
           time={addCueTime}
           onSave={handleSaveCue}
@@ -510,6 +1061,12 @@ function App() {
       {editorMode && editingCue && (
         <EditCueModal
           cue={editingCue}
+          mediaLibrary={mediaLibrary}
+          defaultVideoLabel={
+            activeSong?.videoFilename
+              ? `Song video (${activeSong.videoFilename})`
+              : "Song video (default)"
+          }
           onSave={handleSaveEditedCue}
           onDelete={handleDeleteEditedCue}
           onCancel={handleCancelEditCue}
@@ -521,6 +1078,14 @@ function App() {
           cue={deletingCue}
           onConfirm={handleConfirmDeleteCue}
           onCancel={handleCancelDeleteCue}
+        />
+      )}
+
+      {editorMode && deletingSong && (
+        <ConfirmDeleteSongDialog
+          songTitle={deletingSong.title || deletingSong.videoFilename}
+          onConfirm={handleConfirmDeleteSong}
+          onCancel={handleCancelDeleteSong}
         />
       )}
 

@@ -1,3 +1,4 @@
+import type { LastShowPlaybackPosition } from "./lastShowPlaybackPosition";
 import type { LastShowSession } from "./lastShowSession";
 
 export interface ElectronMediaFile {
@@ -10,6 +11,11 @@ export interface ElectronAPI {
   loadLastShow: () => Promise<LastShowSession | null>;
   saveLastShow: (session: LastShowSession) => Promise<void>;
   clearLastShow: () => Promise<void>;
+  loadLastShowPlaybackPosition: () => Promise<LastShowPlaybackPosition | null>;
+  saveLastShowPlaybackPosition: (
+    position: LastShowPlaybackPosition,
+  ) => Promise<void>;
+  clearLastShowPlaybackPosition: () => Promise<void>;
   pickMediaDirectory: () => Promise<string | null>;
   collectMediaFromDirectory: (
     directoryPath: string,

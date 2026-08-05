@@ -76,7 +76,6 @@ export function logMediaRestore(details: {
   exists?: boolean;
   missingFiles?: string[];
   videoFilename?: string;
-  hypothesisId?: string;
 }): void {
   const parts: string[] = [];
   if (details.savedPath !== undefined) {
@@ -96,22 +95,4 @@ export function logMediaRestore(details: {
   }
 
   console.log(`${MEDIA_RESTORE_LOG} ${parts.join(" | ")}`);
-
-  // #region agent log
-  fetch("http://127.0.0.1:7662/ingest/2edb04e6-0a86-4d03-b142-8e0cd3b07871", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "6db2d5",
-    },
-    body: JSON.stringify({
-      sessionId: "6db2d5",
-      location: "showMediaPaths.ts:logMediaRestore",
-      message: "media restore",
-      data: details,
-      timestamp: Date.now(),
-      hypothesisId: details.hypothesisId,
-    }),
-  }).catch(() => {});
-  // #endregion
 }

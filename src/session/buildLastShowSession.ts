@@ -3,6 +3,7 @@ import {
   LAST_SHOW_SESSION_VERSION,
   type LastShowSession,
 } from "../types/lastShowSession";
+import type { RuntimeShowMediaItem } from "../types/showMedia";
 import type { ShowInfo } from "../types/showInfo";
 import type { Song } from "../types/song";
 
@@ -11,6 +12,7 @@ interface BuildLastShowSessionInput {
   autoAdvance: boolean;
   defaultCueDuration: number;
   playlist: Song[];
+  mediaLibrary?: RuntimeShowMediaItem[];
   activeSongIndex: number;
   currentTime: number;
   timelineZoom: number;
@@ -32,6 +34,7 @@ export function buildLastShowSession(
       defaultCueDuration: input.defaultCueDuration,
       timelineZoom: input.timelineZoom,
       mediaDirectoryPath: input.mediaDirectoryPath,
+      mediaLibrary: input.mediaLibrary,
       playlist: input.playlist,
     }),
     activeSongIndex: input.activeSongIndex,

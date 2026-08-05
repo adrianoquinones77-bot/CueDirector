@@ -1,15 +1,16 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import type { Cue } from "../types/cue";
-import {
-  DEFAULT_CUE_EMOJI,
-  normalizeCueEmoji,
-  resolveCueEmoji,
-} from "../utils/cueEmoji";
+import type { RuntimeShowMediaItem } from "../types/showMedia";
+import { DEFAULT_CUE_EMOJI, resolveCueEmoji } from "../utils/cueEmoji";
+import { createCue } from "../utils/createCue";
 import { formatTime, parseCueEditorTime } from "../utils/formatTime";
 import CueEmojiInput from "./CueEmojiInput";
+import ImportantCueToggle from "./ImportantCueToggle";
 
 interface EditCueModalProps {
   cue: Cue;
+  mediaLibrary: RuntimeShowMediaItem[];
+  defaultVideoLabel?: string;
   onSave: (cue: Cue) => void;
   onDelete: () => void;
   onCancel: () => void;
@@ -17,6 +18,8 @@ interface EditCueModalProps {
 
 export default function EditCueModal({
   cue,
+  mediaLibrary,
+  defaultVideoLabel = "Song video (default)",
   onSave,
   onDelete,
   onCancel,
@@ -24,6 +27,8 @@ export default function EditCueModal({
   const nameRef = useRef<HTMLInputElement>(null);
   const timeRef = useRef<HTMLInputElement>(null);
   const [emoji, setEmoji] = useState(resolveCueEmoji(cue));
+  const [videoId, setVideoId] = useState(cue.videoId ?? "");
+  const [important, setImportant] = useState(cue.important === true);
 
   useEffect(() => {
     nameRef.current?.focus();
@@ -48,14 +53,16 @@ export default function EditCueModal({
     const timeValue = parseCueEditorTime(timeRef.current?.value ?? "");
     if (!cueName || timeValue === null) return;
 
-    const normalizedEmoji = normalizeCueEmoji(emoji.trim() || DEFAULT_CUE_EMOJI);
-    const updated: Cue = {
+    const updated = createCue({
       time: timeValue,
       text: cueName,
-      ...(normalizedEmoji ? { emoji: normalizedEmoji } : {}),
-      ...(cue.type !== undefined ? { type: cue.type } : {}),
-      ...(cue.duration !== undefined ? { duration: cue.duration } : {}),
-    };
+      emoji: emoji.trim() || DEFAULT_CUE_EMOJI,
+      type: cue.type,
+      duration: cue.duration,
+      videoId: videoId || null,
+      important,
+    });
+    if (!updated) return;
 
     onSave(updated);
   };
@@ -93,7 +100,29 @@ export default function EditCueModal({
           />
         </label>
 
+        <label className="dialog__field">
+          <span className="dialog__label">Video</span>
+          <select
+            className="dialog__input"
+            value={videoId}
+            onChange={(event) => setVideoId(event.target.value)}
+          >
+            <option value="">{defaultVideoLabel}</option>
+            {mediaLibrary.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.relativePath || item.filename}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <CueEmojiInput value={emoji} onChange={setEmoji} />
+
+        <ImportantCueToggle
+          id="edit-cue-important"
+          checked={important}
+          onChange={setImportant}
+        />
 
         <div className="dialog__actions">
           <button

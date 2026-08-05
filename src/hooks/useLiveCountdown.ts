@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
 const COUNTDOWN_TICK_MS = 100;
-const PLAYBACK_DELTA_THRESHOLD = 0.001;
 
 export interface LiveCountdownSnapshot {
   /** Remaining seconds rounded to one decimal for display. */
@@ -10,13 +9,9 @@ export interface LiveCountdownSnapshot {
   isPlaying: boolean;
 }
 
-function extrapolatedTime(
-  anchorTime: number,
-  anchorAt: number,
-  playing: boolean,
-): number {
-  if (!playing) return anchorTime;
-  return anchorTime + (performance.now() - anchorAt) / 1000;
+export interface CountdownPlaybackSnapshot {
+  currentTime: number;
+  paused: boolean;
 }
 
 function roundToTenth(seconds: number): number {
@@ -25,25 +20,25 @@ function roundToTenth(seconds: number): number {
 }
 
 /**
- * Updates countdown text and bar every 100 ms while playing (one decimal place).
- * Both values share the same remaining-time calculation; CSS animates the bar between ticks.
+ * Countdown text + bar driven by video playback state.
+ * Polls video.currentTime every 100 ms; freezes when video.paused is true.
  */
 export function useLiveCountdown(
   computeProgress: (time: number) => number,
   computeRemaining: (time: number) => number,
-  currentTime: number,
+  fallbackCurrentTime: number,
   active: boolean,
   resetKey: string,
+  getPlayback: () => CountdownPlaybackSnapshot | null,
 ): LiveCountdownSnapshot {
   const computeProgressRef = useRef(computeProgress);
   const computeRemainingRef = useRef(computeRemaining);
+  const getPlaybackRef = useRef(getPlayback);
+  const fallbackTimeRef = useRef(fallbackCurrentTime);
   computeProgressRef.current = computeProgress;
   computeRemainingRef.current = computeRemaining;
-
-  const currentTimeRef = useRef(currentTime);
-  const lastSyncAtRef = useRef(performance.now());
-  const prevCurrentTimeRef = useRef(currentTime);
-  const isPlayingRef = useRef(false);
+  getPlaybackRef.current = getPlayback;
+  fallbackTimeRef.current = fallbackCurrentTime;
 
   const snapshotFromTime = (
     time: number,
@@ -59,21 +54,9 @@ export function useLiveCountdown(
 
   const [snapshot, setSnapshot] = useState<LiveCountdownSnapshot>(() =>
     active
-      ? snapshotFromTime(currentTime, false)
+      ? snapshotFromTime(fallbackCurrentTime, false)
       : { displayRemaining: 0, progress: 0, isPlaying: false },
   );
-
-  useEffect(() => {
-    const delta = currentTime - prevCurrentTimeRef.current;
-    isPlayingRef.current = Math.abs(delta) > PLAYBACK_DELTA_THRESHOLD;
-    currentTimeRef.current = currentTime;
-    lastSyncAtRef.current = performance.now();
-    prevCurrentTimeRef.current = currentTime;
-
-    if (!isPlayingRef.current) {
-      setSnapshot(snapshotFromTime(currentTime, false));
-    }
-  }, [currentTime]);
 
   useEffect(() => {
     if (!active) {
@@ -81,29 +64,20 @@ export function useLiveCountdown(
       return;
     }
 
-    currentTimeRef.current = currentTime;
-    lastSyncAtRef.current = performance.now();
-    prevCurrentTimeRef.current = currentTime;
-    isPlayingRef.current = false;
-    setSnapshot(snapshotFromTime(currentTime, false));
-
-    const tick = () => {
-      if (!isPlayingRef.current) return;
-
-      setSnapshot(
-        snapshotFromTime(
-          extrapolatedTime(
-            currentTimeRef.current,
-            lastSyncAtRef.current,
-            true,
-          ),
-          true,
-        ),
-      );
+    const readSnapshot = (): LiveCountdownSnapshot => {
+      const playback = getPlaybackRef.current();
+      if (!playback) {
+        return snapshotFromTime(fallbackTimeRef.current, false);
+      }
+      return snapshotFromTime(playback.currentTime, !playback.paused);
     };
 
-    tick();
-    const intervalId = window.setInterval(tick, COUNTDOWN_TICK_MS);
+    setSnapshot(readSnapshot());
+
+    const intervalId = window.setInterval(() => {
+      setSnapshot(readSnapshot());
+    }, COUNTDOWN_TICK_MS);
+
     return () => window.clearInterval(intervalId);
   }, [active, resetKey]);
 

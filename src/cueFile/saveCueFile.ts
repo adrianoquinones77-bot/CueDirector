@@ -16,6 +16,8 @@ export function buildCueFile(song: Song): CueFile {
       ...(cue.emoji !== undefined ? { emoji: cue.emoji } : {}),
       ...(cue.type !== undefined ? { type: cue.type } : {}),
       ...(cue.duration !== undefined ? { duration: cue.duration } : {}),
+      ...(cue.videoId !== undefined ? { videoId: cue.videoId } : {}),
+      ...(cue.important === true ? { important: true } : {}),
     })),
   };
 }

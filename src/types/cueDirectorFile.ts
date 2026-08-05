@@ -1,5 +1,8 @@
 import type { Cue } from "./cue";
+import type { ShowMediaItem } from "./showMedia";
 import type { ShowInfo } from "./showInfo";
+import type { SongLink } from "./songLink";
+import type { SongSetList } from "./songSetList";
 
 /** Current on-disk project format identifier. */
 export const SHOW_FILE_FORMAT = "show";
@@ -20,6 +23,10 @@ export interface CueDirectorSong {
   /** Path to the video relative to `mediaDirectoryPath`. */
   videoRelativePath?: string;
   cues: Cue[];
+  /** Automatic playback chain to another playlist song. */
+  link?: SongLink;
+  /** Display-only set list metadata. */
+  setList?: SongSetList;
 }
 
 export interface CueDirectorPreferences {
@@ -39,6 +46,8 @@ export interface CueDirectorFile {
   timeline: ShowTimelineSettings;
   /** Root folder containing show media (absolute path on desktop). */
   mediaDirectoryPath?: string;
+  /** Show-level video library (optional for legacy .show files). */
+  mediaLibrary?: ShowMediaItem[];
   playlist: CueDirectorSong[];
 }
 

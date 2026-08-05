@@ -3,10 +3,10 @@ import {
   LAST_SHOW_STORAGE_KEY,
   type LastShowSession,
 } from "../types/lastShowSession";
+import { clearLastShowPlaybackPosition } from "./lastShowPlaybackPositionStorage";
+import { isElectronSessionStorage } from "./sessionStorageEnv";
 
-export function isElectronSessionStorage(): boolean {
-  return typeof window !== "undefined" && window.electronAPI !== undefined;
-}
+export { isElectronSessionStorage } from "./sessionStorageEnv";
 
 function isValidSession(value: unknown): value is LastShowSession {
   if (!value || typeof value !== "object") return false;
@@ -53,9 +53,11 @@ export async function saveLastShowSession(
 
 export async function clearLastShowSession(): Promise<void> {
   if (isElectronSessionStorage()) {
+    // Electron clear removes both the show session and playback position files.
     await window.electronAPI!.clearLastShow();
     return;
   }
 
   localStorage.removeItem(LAST_SHOW_STORAGE_KEY);
+  await clearLastShowPlaybackPosition();
 }

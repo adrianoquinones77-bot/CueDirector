@@ -1,9 +1,10 @@
-import { type ChangeEvent, useRef } from "react";
+import { memo, type ChangeEvent, useRef } from "react";
 import { supportsMediaDirectoryPicker } from "../media/loadMediaDirectory";
 
 interface ControlBarProps {
   onLoadShowDirectory: () => Promise<void>;
   onLoadShow: (event: ChangeEvent<HTMLInputElement>) => void;
+  onPlayPause: () => void;
   onPrevious: () => void;
   onNext: () => void;
   canGoPrevious: boolean;
@@ -16,15 +17,16 @@ interface ControlBarProps {
   onToggleEditorMode: () => void;
   onAddCue: () => void;
   canAddCue: boolean;
-  onSaveCues: () => void;
+  onSaveCues: () => void | Promise<void>;
   canSaveCues: boolean;
   defaultCueDuration: number;
   onDefaultCueDurationChange: (value: number) => void;
 }
 
-export default function ControlBar({
+function ControlBar({
   onLoadShowDirectory,
   onLoadShow,
+  onPlayPause,
   onPrevious,
   onNext,
   canGoPrevious,
@@ -77,6 +79,15 @@ export default function ControlBar({
         onClick={handleLoadShowClick}
       >
         Load Show
+      </button>
+
+      <button
+        type="button"
+        className="footer-play-pause"
+        onClick={onPlayPause}
+        title="Play / Pause (Space)"
+      >
+        Play / Pause
       </button>
 
       <button type="button" disabled={!canGoPrevious} onClick={onPrevious}>
@@ -157,3 +168,5 @@ export default function ControlBar({
     </footer>
   );
 }
+
+export default memo(ControlBar);

@@ -1,17 +1,6 @@
 import { useEffect, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { getVideoSeekDelta } from "../utils/videoSeek";
-
-function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-
-  const tagName = target.tagName;
-  return (
-    tagName === "INPUT" ||
-    tagName === "TEXTAREA" ||
-    tagName === "SELECT" ||
-    target.isContentEditable
-  );
-}
+import { isTextEditingTarget } from "./useKeyboardShortcuts";
 
 /**
  * Live-mode arrow key video seeking. Runs in capture phase so cue list / button
@@ -25,7 +14,7 @@ export function useVideoSeekShortcuts(
     if (!enabled) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isTypingTarget(event.target)) return;
+      if (isTextEditingTarget(event.target)) return;
 
       const delta = getVideoSeekDelta(event.code, event.shiftKey);
       if (delta === null) return;

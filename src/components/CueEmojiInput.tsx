@@ -11,7 +11,11 @@ interface CueEmojiInputProps {
 export default function CueEmojiInput({ value, onChange }: CueEmojiInputProps) {
   return (
     <fieldset className="cue-emoji-input">
-      <legend className="dialog__label">Emoji</legend>
+      <legend className="dialog__label">Preset / Emoji</legend>
+      <p className="cue-emoji-input__hint">
+        Click an emoji to fill the cue name. You can still edit the name before
+        creating.
+      </p>
       <label className="cue-emoji-input__manual">
         <span className="visually-hidden">Enter emoji</span>
         <input

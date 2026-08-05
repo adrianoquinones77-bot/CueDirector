@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
-    "dev": "vite",
+    "dev": "rm -rf node_modules/.vite && vite",
     "clean": "rm -rf dist dist-electron node_modules/.vite release",
     "build": "tsc -b && vite build && npm run build:electron",
     "build:electron": "tsc -p tsconfig.electron.json && node scripts/rename-electron-main.cjs",

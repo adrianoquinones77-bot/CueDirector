@@ -1,44 +1,249 @@
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
+import type { RuntimeShowMediaItem } from "../types/showMedia";
 import type { Song } from "../types/song";
+import {
+  mediaIdForSong,
+  orderMediaItemsByPlaylist,
+} from "../showFile/mediaLibrary";
+import {
+  getSongStatus,
+  getSongStatusIcon,
+  type SongStatus,
+} from "../utils/songStatus";
+import SongLinkingControls, {
+  SongLinkCheckbox,
+} from "./SongLinkingControls";
 
 interface PlaylistPanelProps {
-  songs: Song[];
-  activeIndex: number;
-  onSelect: (index: number) => void;
+  mediaItems: RuntimeShowMediaItem[];
+  playlist: Song[];
+  activeSongIndex: number;
+  onSelectMedia: (mediaId: string) => void;
+  onAddVideo: () => void | Promise<void>;
+  onLinkSongs: (songIds: string[]) => boolean;
+  onBreakSongLink: (songId: string) => boolean;
+  onRequestDeleteSong: (songId: string) => void;
   directorMode: boolean;
+  /** From useShowDirector — Song Linking edit UI mounts only when true. */
+  editorMode: boolean;
   width: number;
 }
 
-type SongStatus = "completed" | "current" | "upcoming";
+/** Subtle, distinct tints for separate Song Link groups. */
+const CHAIN_PALETTE = [
+  {
+    bg: "rgba(52, 110, 168, 0.2)",
+    border: "rgba(88, 150, 210, 0.42)",
+    accent: "rgba(96, 168, 230, 0.85)",
+    connector: "rgba(96, 168, 230, 0.55)",
+  },
+  {
+    bg: "rgba(46, 120, 98, 0.2)",
+    border: "rgba(78, 160, 130, 0.42)",
+    accent: "rgba(86, 175, 140, 0.85)",
+    connector: "rgba(86, 175, 140, 0.55)",
+  },
+  {
+    bg: "rgba(140, 108, 64, 0.2)",
+    border: "rgba(180, 140, 84, 0.42)",
+    accent: "rgba(200, 158, 96, 0.85)",
+    connector: "rgba(200, 158, 96, 0.55)",
+  },
+  {
+    bg: "rgba(88, 96, 140, 0.22)",
+    border: "rgba(120, 130, 180, 0.42)",
+    accent: "rgba(140, 150, 200, 0.85)",
+    connector: "rgba(140, 150, 200, 0.55)",
+  },
+  {
+    bg: "rgba(120, 72, 88, 0.2)",
+    border: "rgba(170, 110, 125, 0.42)",
+    accent: "rgba(190, 125, 140, 0.85)",
+    connector: "rgba(190, 125, 140, 0.55)",
+  },
+] as const;
 
-function getSongStatus(index: number, activeIndex: number): SongStatus {
-  if (index < activeIndex) return "completed";
-  if (index === activeIndex) return "current";
-  return "upcoming";
-}
-
-function getStatusIcon(status: SongStatus): string {
-  switch (status) {
-    case "completed":
-      return "✓";
-    case "current":
-      return "▶";
-    case "upcoming":
-      return "○";
+function songIdsInChain(playlist: Song[]): Set<string> {
+  const ids = new Set<string>();
+  for (const song of playlist) {
+    if (song.link?.nextSongId) {
+      ids.add(song.id);
+      ids.add(song.link.nextSongId);
+    }
   }
+  return ids;
 }
 
-function formatSongLabel(index: number, title: string): string {
-  return `${String(index + 1).padStart(2, "0")} ${title}`;
+function assignChainGroups(playlist: Song[]): Map<string, number> {
+  const adjacency = new Map<string, Set<string>>();
+
+  const ensure = (id: string) => {
+    if (!adjacency.has(id)) adjacency.set(id, new Set());
+  };
+
+  for (const song of playlist) {
+    const nextId = song.link?.nextSongId;
+    if (!nextId) continue;
+    ensure(song.id);
+    ensure(nextId);
+    adjacency.get(song.id)!.add(nextId);
+    adjacency.get(nextId)!.add(song.id);
+  }
+
+  const groupBySongId = new Map<string, number>();
+  let groupIndex = 0;
+
+  for (const song of playlist) {
+    if (!adjacency.has(song.id) || groupBySongId.has(song.id)) continue;
+
+    const stack = [song.id];
+    groupBySongId.set(song.id, groupIndex);
+
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (groupBySongId.has(neighbor)) continue;
+        groupBySongId.set(neighbor, groupIndex);
+        stack.push(neighbor);
+      }
+    }
+
+    groupIndex += 1;
+  }
+
+  return groupBySongId;
 }
 
-export default function PlaylistPanel({
-  songs,
-  activeIndex,
-  onSelect,
+function resolveSongForMediaItem(
+  item: RuntimeShowMediaItem,
+  songsByMediaId: Map<string, Song>,
+  playlist: Song[],
+): Song | undefined {
+  const byId = songsByMediaId.get(item.id);
+  if (byId) return byId;
+
+  const filename = item.filename.toLowerCase();
+  return playlist.find(
+    (song) => song.videoFilename.toLowerCase() === filename,
+  );
+}
+
+function songDisplayName(song: Song): string {
+  return song.title || song.videoFilename;
+}
+
+function linkTooltipForSong(
+  song: Song,
+  songsById: Map<string, Song>,
+): string {
+  const nextId = song.link?.nextSongId;
+  if (!nextId) return "End of Song Link";
+
+  const nextSong = songsById.get(nextId);
+  if (!nextSong) return "End of Song Link";
+
+  return `Linked to: ${songDisplayName(nextSong)}`;
+}
+
+function PlaylistPanel({
+  mediaItems,
+  playlist,
+  activeSongIndex,
+  onSelectMedia,
+  onAddVideo,
+  onLinkSongs,
+  onBreakSongLink,
+  onRequestDeleteSong,
   directorMode,
+  editorMode,
   width,
 }: PlaylistPanelProps) {
-  const showProgress = songs.length > 0 && activeIndex >= 0;
+  const [selectedSongIds, setSelectedSongIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!editorMode) {
+      setSelectedSongIds([]);
+    }
+  }, [editorMode]);
+
+  useEffect(() => {
+    const playlistIds = new Set(playlist.map((song) => song.id));
+    setSelectedSongIds((previous) =>
+      previous.filter((id) => playlistIds.has(id)),
+    );
+  }, [playlist]);
+
+  const orderedMediaItems = useMemo(
+    () => orderMediaItemsByPlaylist(mediaItems, playlist),
+    [mediaItems, playlist],
+  );
+
+  const songsByMediaId = useMemo(() => {
+    const map = new Map<string, Song>();
+    for (const song of playlist) {
+      map.set(mediaIdForSong(song), song);
+    }
+    return map;
+  }, [playlist]);
+
+  const songsById = useMemo(() => {
+    const map = new Map<string, Song>();
+    for (const song of playlist) {
+      map.set(song.id, song);
+    }
+    return map;
+  }, [playlist]);
+
+  const playlistIndexBySongId = useMemo(() => {
+    const map = new Map<string, number>();
+    playlist.forEach((song, index) => {
+      map.set(song.id, index);
+    });
+    return map;
+  }, [playlist]);
+
+  const chainedSongIds = useMemo(() => songIdsInChain(playlist), [playlist]);
+  const chainGroups = useMemo(() => assignChainGroups(playlist), [playlist]);
+
+  const selectedInPlaylist = useMemo(
+    () =>
+      playlist
+        .filter((song) => selectedSongIds.includes(song.id))
+        .map((song) => song.id),
+    [playlist, selectedSongIds],
+  );
+
+  const canLink = selectedInPlaylist.length >= 2;
+  const canBreak = selectedInPlaylist.some((id) => chainedSongIds.has(id));
+
+  const toggleSongSelection = (songId: string) => {
+    setSelectedSongIds((previous) =>
+      previous.includes(songId)
+        ? previous.filter((id) => id !== songId)
+        : [...previous, songId],
+    );
+  };
+
+  const handleLinkSongs = () => {
+    if (!canLink) return;
+    if (onLinkSongs(selectedInPlaylist)) {
+      setSelectedSongIds([]);
+    }
+  };
+
+  const handleBreakLinks = () => {
+    if (!canBreak) return;
+    for (const songId of selectedInPlaylist) {
+      onBreakSongLink(songId);
+    }
+    setSelectedSongIds([]);
+  };
 
   return (
     <aside
@@ -46,40 +251,165 @@ export default function PlaylistPanel({
       style={{ width, flex: `0 0 ${width}px` }}
     >
       <div className="playlist-header">
-        <h2 className="playlist-header__title">SHOW</h2>
-        {showProgress && (
+        <h2 className="playlist-header__title">Media / Songs</h2>
+        {orderedMediaItems.length > 0 && (
           <p className="playlist-header__progress">
-            Song {activeIndex + 1} / {songs.length}
+            {orderedMediaItems.length}{" "}
+            {orderedMediaItems.length === 1 ? "video" : "videos"}
           </p>
         )}
       </div>
 
-      {songs.length === 0 ? (
-        <p className="playlist-empty">No show loaded</p>
+      <button
+        type="button"
+        className="playlist-add-video"
+        disabled={directorMode}
+        onClick={() => void onAddVideo()}
+      >
+        + Add Video
+      </button>
+
+      {editorMode && (
+        <SongLinkingControls
+          canLink={canLink}
+          canBreak={canBreak}
+          onLinkSongs={handleLinkSongs}
+          onBreakLinks={handleBreakLinks}
+        />
+      )}
+
+      {orderedMediaItems.length === 0 ? (
+        <p className="playlist-empty">No videos in library</p>
       ) : (
-        <ul className="playlist-list">
-          {songs.map((song, index) => {
-            const status = getSongStatus(index, activeIndex);
+        <ul
+          className={`playlist-list${editorMode ? "" : " playlist-list--live"}`}
+        >
+          {orderedMediaItems.map((item, index) => {
+            const song = resolveSongForMediaItem(
+              item,
+              songsByMediaId,
+              playlist,
+            );
+            const playlistIndex =
+              song !== undefined ? playlistIndexBySongId.get(song.id) : undefined;
+            const isActive =
+              playlistIndex !== undefined &&
+              playlistIndex === activeSongIndex;
+            // Completion progress is Live Show only — never while programming.
+            const status: SongStatus | null =
+              !editorMode && playlistIndex !== undefined
+                ? getSongStatus(playlistIndex, activeSongIndex)
+                : null;
+            const isSelected = Boolean(
+              song && selectedSongIds.includes(song.id),
+            );
+            const isLinked = song ? chainedSongIds.has(song.id) : false;
+            const chainGroup =
+              song && isLinked ? chainGroups.get(song.id) : undefined;
+            const palette =
+              chainGroup !== undefined
+                ? CHAIN_PALETTE[chainGroup % CHAIN_PALETTE.length]
+                : undefined;
+
+            const nextItem = orderedMediaItems[index + 1];
+            const nextSong = nextItem
+              ? resolveSongForMediaItem(nextItem, songsByMediaId, playlist)
+              : undefined;
+            const connectsToNext = Boolean(
+              song?.link?.nextSongId &&
+                nextSong &&
+                song.link.nextSongId === nextSong.id,
+            );
+
+            const linkTooltip =
+              song && isLinked
+                ? linkTooltipForSong(song, songsById)
+                : undefined;
+            const cueCount = song?.cues.length ?? 0;
+
+            const chainStyle = palette
+              ? ({
+                  "--chain-bg": palette.bg,
+                  "--chain-border": palette.border,
+                  "--chain-accent": palette.accent,
+                  "--chain-connector": palette.connector,
+                } as CSSProperties)
+              : undefined;
 
             return (
-              <li key={song.id}>
-                <button
-                  type="button"
-                  className={`playlist-item playlist-item--${status}${status === "current" ? " active" : ""}`}
-                  disabled={directorMode}
-                  onClick={() => onSelect(index)}
+              <li
+                key={item.id}
+                className={`playlist-list__item${
+                  connectsToNext ? " playlist-list__item--connects" : ""
+                }${isLinked ? " playlist-list__item--linked" : ""}`}
+                style={chainStyle}
+              >
+                <div
+                  className={`playlist-item-row${isSelected ? " playlist-item-row--selected" : ""}${isLinked ? " playlist-item-row--linked" : ""}`}
                 >
-                  <span className="playlist-item__icon" aria-hidden="true">
-                    {getStatusIcon(status)}
-                  </span>
-                  <span className="playlist-item__title">
-                    {formatSongLabel(index, song.title)}
-                  </span>
-                  <span className="playlist-item__cue-count">
-                    {song.cues.length}{" "}
-                    {song.cues.length === 1 ? "cue" : "cues"}
-                  </span>
-                </button>
+                  {editorMode && (
+                    <SongLinkCheckbox
+                      checked={isSelected}
+                      disabled={!song}
+                      onToggle={() => {
+                        if (!song) return;
+                        toggleSongSelection(song.id);
+                      }}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    className={`playlist-item${status ? ` playlist-item--${status}` : ""}${isActive ? " active" : ""}${isLinked ? " playlist-item--linked" : ""}`}
+                    disabled={directorMode}
+                    aria-current={isActive ? "true" : undefined}
+                    title={linkTooltip}
+                    onClick={() => onSelectMedia(item.id)}
+                  >
+                    <span className="playlist-item__icon" aria-hidden="true">
+                      {status ? getSongStatusIcon(status) : "🎥"}
+                    </span>
+                    <span className="playlist-item__text">
+                      <span className="playlist-item__title">
+                        {item.filename}
+                        {isActive ? (
+                          <span className="playlist-item__active-label">
+                            {" "}
+                            (active)
+                          </span>
+                        ) : null}
+                      </span>
+                    </span>
+                    <span className="playlist-item__cue-count">
+                      {cueCount} {cueCount === 1 ? "cue" : "cues"}
+                    </span>
+                    {isLinked ? (
+                      <span
+                        className="playlist-item__link-badge"
+                        title={linkTooltip}
+                        aria-label={linkTooltip}
+                      >
+                        🔗
+                      </span>
+                    ) : null}
+                  </button>
+                  {editorMode && song ? (
+                    <button
+                      type="button"
+                      className="playlist-item__delete"
+                      aria-label={`Delete ${songDisplayName(song)} from show`}
+                      title="Delete Song"
+                      onClick={() => onRequestDeleteSong(song.id)}
+                    >
+                      Delete
+                    </button>
+                  ) : null}
+                </div>
+                {connectsToNext ? (
+                  <div
+                    className="playlist-link-connector"
+                    aria-hidden="true"
+                  />
+                ) : null}
               </li>
             );
           })}
@@ -88,3 +418,5 @@ export default function PlaylistPanel({
     </aside>
   );
 }
+
+export default memo(PlaylistPanel);

@@ -157,3 +157,35 @@ export function pickMediaFolderViaInput(): Promise<FileList | null> {
     input.click();
   });
 }
+
+/** Pick one or more video files (not a folder) for the show media library. */
+export function pickVideoFilesViaInput(): Promise<FileList | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = "video/*,.mp4,.mov,.m4v";
+    input.style.display = "none";
+
+    input.addEventListener(
+      "change",
+      () => {
+        resolve(input.files && input.files.length > 0 ? input.files : null);
+        input.remove();
+      },
+      { once: true },
+    );
+
+    input.addEventListener(
+      "cancel",
+      () => {
+        resolve(null);
+        input.remove();
+      },
+      { once: true },
+    );
+
+    document.body.appendChild(input);
+    input.click();
+  });
+}

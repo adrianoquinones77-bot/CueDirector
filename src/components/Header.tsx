@@ -1,3 +1,6 @@
+import { memo } from "react";
+import { usePlaybackTime } from "../playback/playbackClock";
+import { useShowLive } from "../playback/showClock";
 import type { ShowInfo } from "../types/showInfo";
 import { formatTime } from "../utils/formatTime";
 import EditableField from "./EditableField";
@@ -8,7 +11,6 @@ import {
 import type { ShortcutHandlers } from "../keyboard/shortcuts";
 
 interface HeaderProps {
-  currentTime: number;
   showInfo: ShowInfo;
   onShowInfoChange: (field: keyof ShowInfo, value: string) => void;
   activeSongIndex: number;
@@ -20,8 +22,13 @@ interface HeaderProps {
   onToggleShortcuts: () => void;
 }
 
-export default function Header({
-  currentTime,
+/** Isolated subscriber so Header chrome does not re-render every tick. */
+function PlaybackTimer() {
+  const currentTime = usePlaybackTime();
+  return <div className="timer">{formatTime(currentTime)}</div>;
+}
+
+function Header({
   showInfo,
   onShowInfoChange,
   activeSongIndex,
@@ -33,31 +40,50 @@ export default function Header({
   onToggleShortcuts,
 }: HeaderProps) {
   const showProgress = totalSongs > 0 && activeSongIndex >= 0;
+  const showLive = useShowLive();
 
   return (
     <div className="header-area">
       <header className="header">
         <div className="header__left">
-          {directorMode && (
-            <span className="director-mode-indicator">🔒 DIRECTOR MODE</span>
-          )}
-          {editorMode && (
-            <span className="editor-mode-indicator">✎ EDITOR MODE</span>
+          {(showLive || directorMode || editorMode) && (
+            <div className="header__mode-row">
+              {showLive && <span className="live-indicator">● LIVE</span>}
+              {directorMode && (
+                <span className="director-mode-indicator">🔒 DIRECTOR MODE</span>
+              )}
+              {editorMode && (
+                <span className="editor-mode-indicator">✎ EDITOR MODE</span>
+              )}
+            </div>
           )}
 
-          <EditableField
-            icon="🎬"
-            value={showInfo.showName}
-            placeholder="Show Name"
-            onSave={(value) => onShowInfoChange("showName", value)}
-          />
-
-          <EditableField
-            icon="🏟️"
-            value={showInfo.venue}
-            placeholder="Venue"
-            onSave={(value) => onShowInfoChange("venue", value)}
-          />
+          <div className="header__fields">
+            <EditableField
+              icon="🎬"
+              value={showInfo.showName}
+              placeholder="Show Name"
+              onSave={(value) => onShowInfoChange("showName", value)}
+            />
+            <EditableField
+              icon="🎤"
+              value={showInfo.artist}
+              placeholder="Artist"
+              onSave={(value) => onShowInfoChange("artist", value)}
+            />
+            <EditableField
+              icon="🎥"
+              value={showInfo.director}
+              placeholder="Director"
+              onSave={(value) => onShowInfoChange("director", value)}
+            />
+            <EditableField
+              icon="🏟️"
+              value={showInfo.venue}
+              placeholder="Venue"
+              onSave={(value) => onShowInfoChange("venue", value)}
+            />
+          </div>
         </div>
 
         <div className="header__center">
@@ -72,7 +98,7 @@ export default function Header({
                 Song {activeSongIndex + 1} / {totalSongs}
               </p>
             )}
-            <div className="timer">{formatTime(currentTime)}</div>
+            <PlaybackTimer />
           </div>
           <ShortcutsToggle
             open={shortcutsOpen}
@@ -90,3 +116,5 @@ export default function Header({
     </div>
   );
 }
+
+export default memo(Header);

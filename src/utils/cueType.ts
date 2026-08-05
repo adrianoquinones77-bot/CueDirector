@@ -22,6 +22,15 @@ const CUE_TYPE_LABELS: Record<CueType, string> = {
   general: "General",
 };
 
+/** Accent colors used by cue type / category UI. */
+const CUE_TYPE_COLORS: Record<CueType, string> = {
+  camera: "#3b82f6",
+  music: "#a855f7",
+  lights: "#f59e0b",
+  artist: "#ef4444",
+  general: "#94a3b8",
+};
+
 export { CUE_TYPES, DEFAULT_CUE_TYPE, type CueType };
 
 export function isCueType(value: string): value is CueType {
@@ -45,5 +54,9 @@ export function getCueTypeIcon(type: CueType): string {
 
 export function getCueTypeLabel(type: CueType): string {
   return CUE_TYPE_LABELS[type];
+}
+
+export function getCueTypeColor(type: CueType): string {
+  return CUE_TYPE_COLORS[type];
 }
 

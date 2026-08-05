@@ -2,14 +2,20 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
 import { app, ipcMain } from "electron";
+import type { LastShowPlaybackPosition } from "../src/types/lastShowPlaybackPosition";
 import type { LastShowSession } from "../src/types/lastShowSession";
 import { absolutePathToMediaUrl } from "./mediaProtocol";
 import { collectMediaFromDirectory, collectVideosRecursively } from "./mediaScanner";
 
 const SESSION_FILENAME = "last-show.json";
+const PLAYBACK_POSITION_FILENAME = "last-show-position.json";
 
 function getSessionPath(): string {
   return path.join(app.getPath("userData"), SESSION_FILENAME);
+}
+
+function getPlaybackPositionPath(): string {
+  return path.join(app.getPath("userData"), PLAYBACK_POSITION_FILENAME);
 }
 
 async function readSession(): Promise<LastShowSession | null> {
@@ -34,6 +40,34 @@ async function deleteSession(): Promise<void> {
   }
 }
 
+async function readPlaybackPosition(): Promise<LastShowPlaybackPosition | null> {
+  try {
+    const raw = await fs.readFile(getPlaybackPositionPath(), "utf8");
+    return JSON.parse(raw) as LastShowPlaybackPosition;
+  } catch {
+    return null;
+  }
+}
+
+async function writePlaybackPosition(
+  position: LastShowPlaybackPosition,
+): Promise<void> {
+  await fs.mkdir(path.dirname(getPlaybackPositionPath()), { recursive: true });
+  await fs.writeFile(
+    getPlaybackPositionPath(),
+    JSON.stringify(position),
+    "utf8",
+  );
+}
+
+async function deletePlaybackPosition(): Promise<void> {
+  try {
+    await fs.unlink(getPlaybackPositionPath());
+  } catch {
+    // Ignore missing position file.
+  }
+}
+
 export function registerSessionIpc(): void {
   ipcMain.handle("session:load", () => readSession());
 
@@ -41,7 +75,19 @@ export function registerSessionIpc(): void {
     writeSession(session),
   );
 
-  ipcMain.handle("session:clear", () => deleteSession());
+  ipcMain.handle("session:clear", async () => {
+    await deleteSession();
+    await deletePlaybackPosition();
+  });
+
+  ipcMain.handle("session:loadPlaybackPosition", () => readPlaybackPosition());
+
+  ipcMain.handle(
+    "session:savePlaybackPosition",
+    (_event, position: LastShowPlaybackPosition) => writePlaybackPosition(position),
+  );
+
+  ipcMain.handle("session:clearPlaybackPosition", () => deletePlaybackPosition());
 
   ipcMain.handle("media:collect", (_event, directoryPath: string) =>
     collectMediaFromDirectory(directoryPath),

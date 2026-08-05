@@ -295,8 +295,8 @@ export function usePanelLayout(
     };
   }, [handlePointerMove, finishDrag]);
 
-  const startResize = useCallback(
-    (target: ResizeTarget) => (event: ReactPointerEvent<HTMLDivElement>) => {
+  const beginResize = useCallback(
+    (target: ResizeTarget, event: ReactPointerEvent<HTMLDivElement>) => {
       event.preventDefault();
       dragRef.current = {
         target,
@@ -306,6 +306,27 @@ export function usePanelLayout(
       document.body.classList.add("is-resizing-panels");
     },
     [],
+  );
+
+  const onPlaylistResizeStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      beginResize("playlist", event);
+    },
+    [beginResize],
+  );
+
+  const onCueRailResizeStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      beginResize("cueRail", event);
+    },
+    [beginResize],
+  );
+
+  const onDirectorResizeStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      beginResize("director", event);
+    },
+    [beginResize],
   );
 
   const cueSheetWidth = getCueSheetWidth(
@@ -318,8 +339,8 @@ export function usePanelLayout(
     cueRailWidth: layout.cueRailWidth,
     directorWidth: layout.directorWidth,
     cueSheetWidth,
-    onPlaylistResizeStart: startResize("playlist"),
-    onCueRailResizeStart: startResize("cueRail"),
-    onDirectorResizeStart: startResize("director"),
+    onPlaylistResizeStart,
+    onCueRailResizeStart,
+    onDirectorResizeStart,
   };
 }

@@ -6,7 +6,8 @@ export type ShortcutId =
   | "nextSong"
   | "fullscreen"
   | "exitFullscreen"
-  | "toggleShortcuts";
+  | "toggleShortcuts"
+  | "lockShow";
 
 export interface ShortcutDefinition {
   id: ShortcutId;
@@ -43,26 +44,17 @@ function matchKey(
   return (event) => {
     if (event.code !== code) return false;
 
-    if (
-      modifiers.shiftKey !== undefined &&
-      event.shiftKey !== modifiers.shiftKey
-    ) {
-      return false;
-    }
+    const shiftKey = modifiers.shiftKey ?? false;
+    const altKey = modifiers.altKey ?? false;
+    const ctrlKey = modifiers.ctrlKey ?? false;
+    const metaKey = modifiers.metaKey ?? false;
 
-    if (modifiers.altKey !== undefined && event.altKey !== modifiers.altKey) {
-      return false;
-    }
-
-    if (modifiers.ctrlKey !== undefined && event.ctrlKey !== modifiers.ctrlKey) {
-      return false;
-    }
-
-    if (modifiers.metaKey !== undefined && event.metaKey !== modifiers.metaKey) {
-      return false;
-    }
-
-    return true;
+    return (
+      event.shiftKey === shiftKey &&
+      event.altKey === altKey &&
+      event.ctrlKey === ctrlKey &&
+      event.metaKey === metaKey
+    );
   };
 }
 
@@ -112,6 +104,18 @@ export const KEYBOARD_SHORTCUTS: ShortcutDefinition[] = [
     label: "Show/Hide Shortcuts",
     keys: ["?"],
     match: matchKey("Slash", { shiftKey: true }),
+    preventDefault: true,
+  },
+  {
+    id: "lockShow",
+    category: "ui",
+    label: "Lock Show",
+    keys: ["⌘/Ctrl", "L"],
+    match: (event) =>
+      event.code === "KeyL" &&
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      !event.shiftKey,
     preventDefault: true,
   },
 ];

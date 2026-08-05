@@ -11,6 +11,8 @@ export interface CueFileEntry {
   emoji?: string;
   type?: CueType;
   duration?: number;
+  videoId?: string;
+  important?: boolean;
 }
 
 export interface CueFile {

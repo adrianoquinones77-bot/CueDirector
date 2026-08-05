@@ -11,6 +11,9 @@ export function createCueFileHandleRegistry() {
     get(songId: string) {
       return handles.get(songId.toLowerCase());
     },
+    delete(songId: string) {
+      handles.delete(songId.toLowerCase());
+    },
     replaceAll(nextHandles: Map<string, FileSystemFileHandle>) {
       handles.clear();
       for (const [songId, handle] of nextHandles) {

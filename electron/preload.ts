@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { LastShowPlaybackPosition } from "../src/types/lastShowPlaybackPosition";
 import type { LastShowSession } from "../src/types/lastShowSession";
 
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -7,6 +8,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveLastShow: (session: LastShowSession): Promise<void> =>
     ipcRenderer.invoke("session:save", session),
   clearLastShow: (): Promise<void> => ipcRenderer.invoke("session:clear"),
+  loadLastShowPlaybackPosition: (): Promise<LastShowPlaybackPosition | null> =>
+    ipcRenderer.invoke("session:loadPlaybackPosition"),
+  saveLastShowPlaybackPosition: (
+    position: LastShowPlaybackPosition,
+  ): Promise<void> => ipcRenderer.invoke("session:savePlaybackPosition", position),
+  clearLastShowPlaybackPosition: (): Promise<void> =>
+    ipcRenderer.invoke("session:clearPlaybackPosition"),
   pickMediaDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke("dialog:pickMediaDirectory"),
   collectMediaFromDirectory: (directoryPath: string) =>

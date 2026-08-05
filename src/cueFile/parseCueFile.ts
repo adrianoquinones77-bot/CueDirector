@@ -40,6 +40,14 @@ function parseCueEntry(value: unknown): Cue | null {
     if (emoji) cue.emoji = emoji;
   }
 
+  if (typeof value.videoId === "string" && value.videoId.trim()) {
+    cue.videoId = value.videoId.trim();
+  }
+
+  if (value.important === true) {
+    cue.important = true;
+  }
+
   return cue;
 }
 
@@ -92,5 +100,7 @@ export function cuesFromCueFile(cueFile: CueFile): Cue[] {
     ...(cue.emoji !== undefined ? { emoji: cue.emoji } : {}),
     ...(cue.type !== undefined ? { type: cue.type } : {}),
     ...(cue.duration !== undefined ? { duration: cue.duration } : {}),
+    ...(cue.videoId !== undefined ? { videoId: cue.videoId } : {}),
+    ...(cue.important === true ? { important: true } : {}),
   }));
 }

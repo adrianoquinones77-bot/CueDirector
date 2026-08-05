@@ -40,7 +40,7 @@ export const CUE_EMOJI_CATEGORIES: readonly CueEmojiCategory[] = [
   {
     id: "show",
     label: "Show / Stage",
-    emojis: ["🎥", "📹", "🎬", "💡", "🔥", "🎉", "👏"],
+    emojis: ["🎥", "📹", "🎬", "💡", "🔥", "🎆", "🎉", "👏", "💃"],
   },
 ] as const;
 

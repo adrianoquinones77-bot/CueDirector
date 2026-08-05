@@ -3,6 +3,7 @@ import {
   indexMediaFilesByBaseName,
   loadSongCues,
 } from "./cueFile/loadSongCues";
+import { createVideoObjectUrl } from "./media/videoObjectUrl";
 import type { Song } from "./types/song";
 
 function formatSongTitle(baseName: string): string {
@@ -24,7 +25,7 @@ export async function buildPlaylistFromFiles(files: FileList | File[]): Promise<
       id: baseName,
       title: formatSongTitle(baseName),
       videoFilename: video.name,
-      videoUrl: URL.createObjectURL(video),
+      videoUrl: createVideoObjectUrl(video),
       cues,
     });
   }
@@ -39,5 +40,14 @@ export function revokePlaylistUrls(playlist: Song[]): void {
     if (song.videoUrl.startsWith("blob:")) {
       URL.revokeObjectURL(song.videoUrl);
     }
+  }
+}
+
+export function revokeMediaUrls(urls: string[]): void {
+  const seen = new Set<string>();
+  for (const url of urls) {
+    if (!url.startsWith("blob:") || seen.has(url)) continue;
+    seen.add(url);
+    URL.revokeObjectURL(url);
   }
 }

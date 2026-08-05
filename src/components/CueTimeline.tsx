@@ -1,23 +1,28 @@
 import {
+  memo,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   useCallback,
+  useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { useTimelineInteraction } from "../hooks/useTimelineInteraction";
 import { blockArrowKeyFocusNavigation } from "../hooks/useVideoSeekShortcuts";
+import { usePlaybackTime } from "../playback/playbackClock";
 import type { VideoPlayerHandle } from "./VideoPlayer";
 import type { Cue } from "../types/cue";
 import { getCueEndTime, isCueActive } from "../utils/cueTiming";
 import { getCueDisplayIcon } from "../utils/cueEmoji";
+import { logPlayCue, sanitizeCueTime } from "../utils/createCue";
 import { formatTime, formatTimelineClock, snapCueTime } from "../utils/formatTime";
 import { getCueWindow } from "../utils/getCueWindow";
+import { buildTimelineRulerTicks } from "../utils/timelineRuler";
 
 interface CueTimelineProps {
   cues: Cue[];
-  currentTime: number;
   defaultCueDuration: number;
   videoPlayerRef: RefObject<VideoPlayerHandle | null>;
   directorMode?: boolean;
@@ -26,6 +31,7 @@ interface CueTimelineProps {
   onSelectCue?: (index: number) => void;
   onCueContextMenu?: (index: number, event: React.MouseEvent) => void;
   onUpdateCueTime?: (index: number, time: number) => void;
+  onCueSeek?: (time: number, cue: Cue) => void;
   videoSrc?: string;
   videoDuration?: number;
   timelineZoom?: number;
@@ -58,9 +64,8 @@ function getMarkerVariant(
  * Interaction (zoom, playhead sync, scroll follow) is handled by useTimelineInteraction
  * so Electron and web share identical behavior.
  */
-export default function CueTimeline({
+function CueTimeline({
   cues,
-  currentTime,
   defaultCueDuration,
   videoPlayerRef,
   directorMode = false,
@@ -69,11 +74,13 @@ export default function CueTimeline({
   onSelectCue,
   onCueContextMenu,
   onUpdateCueTime,
+  onCueSeek,
   videoSrc,
   videoDuration = 0,
   timelineZoom = 1,
   onTimelineZoomChange,
 }: CueTimelineProps) {
+  const currentTime = usePlaybackTime();
   const markerDragRef = useRef<MarkerDragState | null>(null);
   const [markerDragPreview, setMarkerDragPreview] = useState<{
     index: number;
@@ -120,6 +127,31 @@ export default function CueTimeline({
   });
 
   const isMarkerDragging = markerDragPreview !== null;
+
+  const seekToCueTime = useCallback(
+    (cue: Cue) => {
+      if (onCueSeek) {
+        onCueSeek(cue.time, cue);
+        return;
+      }
+
+      const seekTime = sanitizeCueTime(cue.time);
+      logPlayCue(cue, seekTime ?? Number.NaN, videoSrc);
+
+      if (seekTime === null) {
+        console.error("[PLAY CUE] aborted: invalid seek time", cue.time);
+        return;
+      }
+
+      if (!videoSrc) {
+        console.error("[PLAY CUE] aborted: no video reference");
+        return;
+      }
+
+      videoPlayerRef.current?.seekTo(seekTime);
+    },
+    [onCueSeek, videoPlayerRef, videoSrc],
+  );
 
   const getTimeFromClientX = useCallback(
     (clientX: number) => {
@@ -224,10 +256,27 @@ export default function CueTimeline({
       }
 
       if (canSeek && event.button === 0) {
-        videoPlayerRef.current?.seekTo(cueTime);
+        const cue = cues[drag.index];
+        if (cue) {
+          seekToCueTime({ ...cue, time: cueTime });
+        } else {
+          const seekTime = sanitizeCueTime(cueTime);
+          if (seekTime !== null && videoSrc) {
+            videoPlayerRef.current?.seekTo(seekTime);
+          }
+        }
       }
     },
-    [canSeek, getTimeFromClientX, onUpdateCueTime, resumeFollow, videoPlayerRef],
+    [
+      canSeek,
+      cues,
+      getTimeFromClientX,
+      onUpdateCueTime,
+      resumeFollow,
+      seekToCueTime,
+      videoPlayerRef,
+      videoSrc,
+    ],
   );
 
   const handleCueMarkerPointerDown = useCallback(
@@ -244,7 +293,10 @@ export default function CueTimeline({
 
       if (!canEditCues) {
         if (canSeek && event.button === 0) {
-          videoPlayerRef.current?.seekTo(cueTime);
+          const cue = cues[cueIndex];
+          if (cue) {
+            seekToCueTime(cue);
+          }
         }
         return;
       }
@@ -258,7 +310,15 @@ export default function CueTimeline({
       setMarkerDragPreview({ index: cueIndex, time: cueTime });
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [canEditCues, canSeek, editorMode, onSelectCue, pauseFollow, videoPlayerRef],
+    [
+      canEditCues,
+      canSeek,
+      cues,
+      editorMode,
+      onSelectCue,
+      pauseFollow,
+      seekToCueTime,
+    ],
   );
 
   const handleCueMarkerPointerMove = useCallback(
@@ -295,11 +355,44 @@ export default function CueTimeline({
   );
 
   const { next } = getCueWindow(cues, currentTime, defaultCueDuration);
+  const showRuler = editorMode && !directorMode && hasDuration;
+  const [trackWidthPx, setTrackWidthPx] = useState(0);
+
+  useEffect(() => {
+    if (!showRuler) {
+      setTrackWidthPx(0);
+      return;
+    }
+
+    const track = trackRef.current;
+    if (!track || typeof ResizeObserver === "undefined") {
+      setTrackWidthPx(track?.offsetWidth ?? 0);
+      return;
+    }
+
+    const updateWidth = () => {
+      setTrackWidthPx(track.offsetWidth);
+    };
+
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(track);
+    return () => observer.disconnect();
+  }, [showRuler, zoom, duration, trackRef]);
+
+  const rulerTicks = useMemo(
+    () =>
+      showRuler ? buildTimelineRulerTicks(duration, trackWidthPx) : [],
+    [duration, showRuler, trackWidthPx],
+  );
+
+  const trackWidthStyle = { width: `${zoom * 100}%`, minWidth: "100%" };
 
   const timelineClassName = [
     "cue-timeline",
     editorMode ? "cue-timeline--editor" : "",
     directorMode ? "cue-timeline--director" : "",
+    showRuler ? "cue-timeline--with-ruler" : "",
     hasDuration ? "" : "cue-timeline--empty",
   ]
     .filter(Boolean)
@@ -350,7 +443,7 @@ export default function CueTimeline({
         <div
           ref={trackRef}
           className={`cue-timeline__track${isDragging ? " cue-timeline__track--dragging" : ""}${isMarkerDragging ? " cue-timeline__track--marker-dragging" : ""}${isViewOnly ? " cue-timeline__track--view-only" : ""}${hasDuration ? "" : " cue-timeline__track--empty"}`}
-          style={{ width: `${zoom * 100}%`, minWidth: "100%" }}
+          style={trackWidthStyle}
           onPointerDown={hasDuration && canSeek ? handleTrackPointerDown : undefined}
         >
           <div className="cue-timeline__rail" aria-hidden="true" />
@@ -387,7 +480,7 @@ export default function CueTimeline({
                   <button
                     key={`${cue.time}-${index}`}
                     type="button"
-                    className={`cue-timeline__marker cue-timeline__marker--${getMarkerVariant(cue, next, currentTime, defaultCueDuration)}${isSelected ? " cue-timeline__marker--selected" : ""}${isDraggingMarker ? " cue-timeline__marker--dragging" : ""}`}
+                    className={`cue-timeline__marker cue-timeline__marker--${getMarkerVariant(cue, next, currentTime, defaultCueDuration)}${isSelected ? " cue-timeline__marker--selected" : ""}${isDraggingMarker ? " cue-timeline__marker--dragging" : ""}${cue.important ? " cue-timeline__marker--important" : ""}`}
                     style={{ left: `${(displayCueTime / duration) * 100}%` }}
                     onPointerDown={(event) =>
                       handleCueMarkerPointerDown(event, cue.time, index)
@@ -399,28 +492,77 @@ export default function CueTimeline({
                     onKeyDown={blockArrowKeyFocusNavigation}
                     aria-label={
                       canEditCues
-                        ? `Cue ${cue.text} at ${formatTime(displayCueTime)}. Drag horizontally to edit time.`
-                        : `Cue ${cue.text} at ${formatTime(cue.time)}`
+                        ? `${cue.important ? "Important cue " : "Cue "}${cue.text} at ${formatTime(displayCueTime)}. Drag horizontally to edit time.`
+                        : `${cue.important ? "Important cue " : "Cue "}${cue.text} at ${formatTime(cue.time)}`
                     }
                     aria-pressed={isSelected || undefined}
                   >
                     <span className="cue-timeline__marker-icon" aria-hidden="true">
                       {cueEmoji}
                     </span>
-                    <span className="cue-timeline__tooltip">
-                      <span className="cue-timeline__tooltip-emoji">{cueEmoji}</span>
-                      <span className="cue-timeline__tooltip-name">{cue.text}</span>
-                      <span className="cue-timeline__tooltip-time">
+                    {cue.important ? (
+                      <span className="cue-timeline__marker-star" aria-hidden="true">
+                        ⭐
+                      </span>
+                    ) : null}
+                    {isDraggingMarker ? (
+                      <span className="cue-timeline__drag-timecode" aria-live="polite">
                         {formatTime(displayCueTime)}
                       </span>
-                    </span>
+                    ) : (
+                      <span className="cue-timeline__tooltip">
+                        <span className="cue-timeline__tooltip-emoji">{cueEmoji}</span>
+                        <span className="cue-timeline__tooltip-name">
+                          {cue.important ? "⭐ " : ""}
+                          {cue.text}
+                        </span>
+                        <span className="cue-timeline__tooltip-time">
+                          {formatTime(displayCueTime)}
+                        </span>
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </>
           )}
         </div>
+
+        {showRuler && (
+          <div
+            className="cue-timeline__ruler"
+            style={trackWidthStyle}
+            aria-hidden="true"
+          >
+            <div className="cue-timeline__ruler-track">
+              {rulerTicks.map((tick) => {
+                const atStart = tick.time <= 1e-6;
+                const atEnd = Math.abs(tick.time - duration) <= 1e-3;
+                const alignClass = atStart
+                  ? " cue-timeline__ruler-tick--start"
+                  : atEnd
+                    ? " cue-timeline__ruler-tick--end"
+                    : "";
+
+                return (
+                  <div
+                    key={`${tick.level}-${tick.time}`}
+                    className={`cue-timeline__ruler-tick cue-timeline__ruler-tick--${tick.level}${alignClass}`}
+                    style={{ left: `${(tick.time / duration) * 100}%` }}
+                  >
+                    <span className="cue-timeline__ruler-mark" />
+                    {tick.label ? (
+                      <span className="cue-timeline__ruler-label">{tick.label}</span>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+export default memo(CueTimeline);

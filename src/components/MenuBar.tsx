@@ -1,8 +1,10 @@
-import { type ChangeEvent, useEffect, useRef, useState } from "react";
+import { memo, type ChangeEvent, useEffect, useRef, useState } from "react";
 import {
   pickMediaDirectory,
   supportsMediaDirectoryPicker,
 } from "../media/loadMediaDirectory";
+
+export type AppWorkspace = "director" | "setlist";
 
 interface MenuBarProps {
   onSaveShow: () => void;
@@ -19,12 +21,26 @@ interface MenuBarProps {
   onConnectMediaFolder: (files: FileList) => Promise<number | undefined>;
   onCancelOpenShow: () => void;
   onClearLastShow: () => void | Promise<void>;
+  onAddVideosToLibrary: () => void | Promise<void>;
+  onLockShow: () => void;
+  onShowReady: () => void;
+  onEndShow: () => void;
+  onResetShowTimer: () => void;
   onShowRestored: (timelineZoom?: number) => void;
   canSaveShow: boolean;
+  canAddVideos: boolean;
   directorMode: boolean;
+  performanceLocked: boolean;
+  showLive: boolean;
+  canResetShowTimer: boolean;
+  showReadyActive: boolean;
+  workspace: AppWorkspace;
+  onWorkspaceChange: (workspace: AppWorkspace) => void;
 }
 
-export default function MenuBar({
+type OpenMenu = "file" | "show" | null;
+
+function MenuBar({
   onSaveShow,
   onOpenShowFile,
   onTryAutoRestorePendingShow,
@@ -33,36 +49,48 @@ export default function MenuBar({
   onConnectMediaFolder,
   onCancelOpenShow,
   onClearLastShow,
+  onAddVideosToLibrary,
+  onLockShow,
+  onShowReady,
+  onEndShow,
+  onResetShowTimer,
   onShowRestored,
   canSaveShow,
+  canAddVideos,
   directorMode,
+  performanceLocked,
+  showLive,
+  canResetShowTimer,
+  showReadyActive,
+  workspace,
+  onWorkspaceChange,
 }: MenuBarProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const showFileInputRef = useRef<HTMLInputElement>(null);
   const mediaFolderInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!openMenu) return;
 
     const handlePointerDown = (event: MouseEvent) => {
       if (!menuRef.current?.contains(event.target as Node)) {
-        setMenuOpen(false);
+        setOpenMenu(null);
       }
     };
 
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [menuOpen]);
+  }, [openMenu]);
 
   const handleOpenShow = () => {
-    setMenuOpen(false);
+    setOpenMenu(null);
     if (directorMode) return;
     showFileInputRef.current?.click();
   };
 
   const handleSaveShow = () => {
-    setMenuOpen(false);
+    setOpenMenu(null);
     if (directorMode || !canSaveShow) return;
     onSaveShow();
   };
@@ -120,13 +148,36 @@ export default function MenuBar({
   };
 
   const handleClearLastShow = () => {
-    setMenuOpen(false);
+    setOpenMenu(null);
     if (directorMode) return;
     void onClearLastShow();
   };
 
+  const handleAddVideos = () => {
+    setOpenMenu(null);
+    if (directorMode || !canAddVideos) return;
+    void onAddVideosToLibrary();
+  };
+
+  const handleLockShow = () => {
+    setOpenMenu(null);
+    onLockShow();
+  };
+
+  const handleEndShow = () => {
+    setOpenMenu(null);
+    if (!showLive) return;
+    onEndShow();
+  };
+
+  const handleResetShowTimer = () => {
+    setOpenMenu(null);
+    if (!canResetShowTimer) return;
+    onResetShowTimer();
+  };
+
   return (
-    <nav className="menu-bar" aria-label="Application menu">
+    <nav className="menu-bar" aria-label="Application menu" ref={menuRef}>
       <input
         ref={showFileInputRef}
         type="file"
@@ -146,18 +197,22 @@ export default function MenuBar({
         onChange={handleMediaFolderChange}
       />
 
-      <div className="menu-bar__group" ref={menuRef}>
+      <span className="menu-bar__brand">CueDirector</span>
+
+      <div className="menu-bar__group">
         <button
           type="button"
-          className={`menu-bar__trigger${menuOpen ? " menu-bar__trigger--open" : ""}`}
+          className={`menu-bar__trigger${openMenu === "file" ? " menu-bar__trigger--open" : ""}`}
           aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((open) => !open)}
+          aria-expanded={openMenu === "file"}
+          onClick={() =>
+            setOpenMenu((current) => (current === "file" ? null : "file"))
+          }
         >
           File
         </button>
 
-        {menuOpen && (
+        {openMenu === "file" && (
           <div className="menu-bar__dropdown" role="menu">
             <button
               type="button"
@@ -181,6 +236,15 @@ export default function MenuBar({
               type="button"
               role="menuitem"
               className="menu-bar__item"
+              disabled={directorMode || !canAddVideos}
+              onClick={handleAddVideos}
+            >
+              Add Videos to Library
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="menu-bar__item"
               disabled={directorMode}
               onClick={handleClearLastShow}
             >
@@ -189,6 +253,111 @@ export default function MenuBar({
           </div>
         )}
       </div>
+
+      <div className="menu-bar__group">
+        <button
+          type="button"
+          className={`menu-bar__trigger${openMenu === "show" ? " menu-bar__trigger--open" : ""}`}
+          aria-haspopup="menu"
+          aria-expanded={openMenu === "show"}
+          onClick={() =>
+            setOpenMenu((current) => (current === "show" ? null : "show"))
+          }
+        >
+          Show
+        </button>
+
+        {openMenu === "show" && (
+          <div className="menu-bar__dropdown" role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              className="menu-bar__item"
+              onClick={handleLockShow}
+            >
+              Lock Show
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="menu-bar__item"
+              disabled={!showLive}
+              onClick={handleEndShow}
+            >
+              End Show
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="menu-bar__item"
+              disabled={!canResetShowTimer}
+              onClick={handleResetShowTimer}
+            >
+              Reset Show Timer
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="menu-bar__spacer" aria-hidden="true" />
+
+      <div
+        className="menu-bar__workspaces"
+        role="tablist"
+        aria-label="Workspace"
+      >
+        <button
+          type="button"
+          role="tab"
+          className={`menu-bar__workspace menu-bar__workspace--director${
+            workspace === "director" ? " menu-bar__workspace--director-active" : ""
+          }`}
+          aria-selected={workspace === "director"}
+          onClick={() => onWorkspaceChange("director")}
+        >
+          Director
+        </button>
+        <button
+          type="button"
+          role="tab"
+          className={`menu-bar__workspace menu-bar__workspace--setlist${
+            workspace === "setlist" ? " menu-bar__workspace--setlist-active" : ""
+          }`}
+          aria-selected={workspace === "setlist"}
+          onClick={() => onWorkspaceChange("setlist")}
+        >
+          Set List
+        </button>
+      </div>
+
+      <div className="menu-bar__show-controls">
+        <button
+          type="button"
+          className={`menu-bar__workspace menu-bar__workspace--show-ready${
+            showReadyActive ? " menu-bar__workspace--show-ready-active" : ""
+          }`}
+          aria-pressed={showReadyActive}
+          onClick={onShowReady}
+        >
+          Show Ready
+        </button>
+        <button
+          type="button"
+          className="menu-bar__lock"
+          onClick={onLockShow}
+          title={
+            performanceLocked
+              ? "Unlock Show (⌘/Ctrl+L)"
+              : "Lock Show (⌘/Ctrl+L)"
+          }
+          aria-label={performanceLocked ? "Unlock show" : "Lock show"}
+          aria-pressed={performanceLocked}
+        >
+          <span aria-hidden="true">{performanceLocked ? "🔐" : "🔒"}</span>
+        </button>
+      </div>
     </nav>
   );
 }
+
+export default memo(MenuBar);

@@ -1,7 +1,18 @@
-import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from "react";
 import type { Cue } from "../types/cue";
 import { useLiveCountdown } from "../hooks/useLiveCountdown";
+import { usePlaybackTime } from "../playback/playbackClock";
 import ResizeHandle from "./ResizeHandle";
+import type { VideoPlayerHandle } from "./VideoPlayer";
 import {
   getCueEndTime,
   getLivePeriodStart,
@@ -12,12 +23,13 @@ import { getCueLabel } from "../utils/formatCueText";
 import { getCueWindow } from "../utils/getCueWindow";
 import { blockArrowKeyFocusNavigation } from "../hooks/useVideoSeekShortcuts";
 import AdaptiveCueText from "./AdaptiveCueText";
+import ShowTimer from "./ShowTimer";
 
 interface CuePanelProps {
-  currentTime: number;
   cues: Cue[];
   defaultCueDuration: number;
-  onCueSeek: (time: number) => void;
+  onCueSeek: (time: number, cue: Cue) => void;
+  videoPlayerRef: RefObject<VideoPlayerHandle | null>;
   directorMode: boolean;
   editorMode: boolean;
   width: number;
@@ -28,9 +40,11 @@ interface CuePanelProps {
   selectedCueIndex: number | null;
   onSelectCue: (index: number) => void;
   onCueContextMenu: (index: number, event: React.MouseEvent) => void;
+  onToggleImportant: (index: number) => void;
 }
 
 type CueRowVariant = "past" | "current" | "next" | "future";
+type CueSheetTab = "all" | "important";
 
 const USER_SCROLL_PAUSE_MS = 2000;
 const LIVE_LABEL = "LIVE";
@@ -38,6 +52,11 @@ const LIVE_LABEL = "LIVE";
 interface CueSheetIndices {
   currentIndex: number;
   nextIndex: number;
+}
+
+interface CueSheetEntry {
+  cue: Cue;
+  index: number;
 }
 
 function getCueSheetIndices(
@@ -136,9 +155,17 @@ function DirectorCueDisplay({
 
   const icon = cue ? getCueDisplayIcon(cue) : null;
   const label = getCueLabel(text);
+  const isImportant = cue?.important === true;
 
   return (
-    <div className={`cue-display ${className}`}>
+    <div
+      className={`cue-display ${className}${isImportant ? " cue-display--important" : ""}`}
+    >
+      {isImportant && (
+        <span className="cue-display__important" aria-hidden="true">
+          ⭐
+        </span>
+      )}
       {icon && (
         <span className="cue-display__icon" aria-hidden="true">
           {icon}
@@ -158,11 +185,11 @@ function getNowDisplayText(
   return LIVE_LABEL;
 }
 
-export default function CuePanel({
-  currentTime,
+function CuePanel({
   cues,
   defaultCueDuration,
   onCueSeek,
+  videoPlayerRef,
   directorMode,
   editorMode,
   width,
@@ -173,7 +200,9 @@ export default function CuePanel({
   selectedCueIndex,
   onSelectCue,
   onCueContextMenu,
+  onToggleImportant,
 }: CuePanelProps) {
+  const currentTime = usePlaybackTime();
   const { current, next } = getCueWindow(cues, currentTime, defaultCueDuration);
   const cueSheetIndices = getCueSheetIndices(
     cues,
@@ -181,6 +210,7 @@ export default function CuePanel({
     defaultCueDuration,
   );
   const nowText = getNowDisplayText(current, cues);
+  const [sheetTab, setSheetTab] = useState<CueSheetTab>("all");
   const computeNextCueProgress = useCallback(
     (time: number) =>
       getNextCueProgress(cues, current, next, time, defaultCueDuration),
@@ -189,6 +219,17 @@ export default function CuePanel({
   const computeRemaining = useCallback(
     (time: number) => (next ? Math.max(0, next.time - time) : 0),
     [next],
+  );
+  const getPlayback = useCallback(
+    () => {
+      const player = videoPlayerRef.current;
+      if (!player) return null;
+      return {
+        currentTime: player.getCurrentTime(),
+        paused: player.isPaused(),
+      };
+    },
+    [videoPlayerRef],
   );
   const countdownProgressKey = `${current?.time ?? "live"}:${next?.time ?? "none"}`;
   const {
@@ -201,10 +242,21 @@ export default function CuePanel({
       currentTime,
       Boolean(next),
       countdownProgressKey,
+      getPlayback,
     );
   const currentRowRef = useRef<HTMLLIElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const userScrollingRef = useRef(false);
+
+  const sheetEntries = useMemo<CueSheetEntry[]>(() => {
+    if (sheetTab === "all") {
+      return cues.map((cue, index) => ({ cue, index }));
+    }
+
+    return cues
+      .map((cue, index) => ({ cue, index }))
+      .filter((entry) => entry.cue.important === true);
+  }, [cues, sheetTab]);
 
   useEffect(() => {
     const list = listRef.current;
@@ -226,16 +278,17 @@ export default function CuePanel({
       list.removeEventListener("scroll", handleScroll);
       window.clearTimeout(resumeTimeout);
     };
-  }, []);
+  }, [sheetTab]);
 
   useEffect(() => {
     if (userScrollingRef.current) return;
+    if (sheetTab !== "all") return;
 
     currentRowRef.current?.scrollIntoView({
       block: "center",
       behavior: "smooth",
     });
-  }, [current?.time]);
+  }, [current?.time, sheetTab]);
 
   return (
     <aside
@@ -248,7 +301,11 @@ export default function CuePanel({
       >
         <section className="cue-section cue-section--now">
           <h2 className="cue-section__title">NOW</h2>
-          <div className="cue-broadcast-card cue-broadcast-card--now">
+          <div
+            className={`cue-broadcast-card cue-broadcast-card--now${
+              current?.important ? " cue-broadcast-card--important" : ""
+            }`}
+          >
             <DirectorCueDisplay
               cue={current}
               text={nowText}
@@ -261,7 +318,11 @@ export default function CuePanel({
 
         <section className="cue-section cue-section--next">
           <h2 className="cue-section__title">NEXT</h2>
-          <div className="cue-broadcast-card cue-broadcast-card--next">
+          <div
+            className={`cue-broadcast-card cue-broadcast-card--next${
+              next?.important ? " cue-broadcast-card--important" : ""
+            }`}
+          >
             <DirectorCueDisplay cue={next} text={next?.text} className="cue next" />
           </div>
           <div
@@ -291,77 +352,145 @@ export default function CuePanel({
         className="cue-sheet-panel"
         style={{ width: cueSheetWidth, flex: `1 1 ${cueSheetWidth}px` }}
       >
-        <h2 className="cue-section__title">CUE SHEET</h2>
-        <ul
-          ref={listRef}
-          className="cue-sheet-list"
-          aria-label="Cue sheet"
-          onKeyDown={blockArrowKeyFocusNavigation}
-        >
-          {cues.map((cue, index) => {
-            const variant = getCueSheetRowVariant(
-              index,
-              cue,
-              cueSheetIndices,
-              currentTime,
-              defaultCueDuration,
-            );
-            const isCurrent = variant === "current";
-            const isSelected = editorMode && selectedCueIndex === index;
+        <div className="cue-sheet-header">
+          <h2 className="cue-section__title">CUE SHEET</h2>
+          <div className="cue-sheet-tabs" role="tablist" aria-label="Cue sheet views">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sheetTab === "all"}
+              className={`cue-sheet-tab${sheetTab === "all" ? " cue-sheet-tab--active" : ""}`}
+              onClick={() => setSheetTab("all")}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sheetTab === "important"}
+              className={`cue-sheet-tab${sheetTab === "important" ? " cue-sheet-tab--active" : ""}`}
+              onClick={() => setSheetTab("important")}
+            >
+              ⭐ Important
+            </button>
+          </div>
+        </div>
 
-            return (
-              <li
-                key={`${cue.time}-${index}-${cue.text}`}
-                ref={isCurrent ? currentRowRef : undefined}
-                className={`cue-sheet-item cue-sheet-item--${variant}${isSelected ? " cue-sheet-item--selected" : ""}`}
-              >
-                <button
-                  type="button"
-                  className="cue-sheet-item__button"
-                  disabled={directorMode}
-                  onClick={() => {
-                    if (editorMode) {
-                      onSelectCue(index);
-                    }
-                    onCueSeek(cue.time);
-                  }}
-                  onKeyDown={blockArrowKeyFocusNavigation}
-                  onContextMenu={(event) => {
-                    if (!editorMode) return;
-                    event.preventDefault();
-                    onSelectCue(index);
-                    onCueContextMenu(index, event);
-                  }}
+        {sheetTab === "important" && sheetEntries.length === 0 ? (
+          <p className="cue-sheet-empty">No Important Cues</p>
+        ) : (
+          <ul
+            ref={listRef}
+            className="cue-sheet-list"
+            aria-label={sheetTab === "important" ? "Important cues" : "Cue sheet"}
+            onKeyDown={blockArrowKeyFocusNavigation}
+          >
+            {sheetEntries.map(({ cue, index }) => {
+              const variant = getCueSheetRowVariant(
+                index,
+                cue,
+                cueSheetIndices,
+                currentTime,
+                defaultCueDuration,
+              );
+              const isCurrent = variant === "current";
+              const isSelected = editorMode && selectedCueIndex === index;
+              const isImportant = cue.important === true;
+
+              return (
+                <li
+                  key={`${cue.time}-${index}-${cue.text}`}
+                  ref={isCurrent && sheetTab === "all" ? currentRowRef : undefined}
+                  className={`cue-sheet-item cue-sheet-item--${variant}${
+                    isSelected ? " cue-sheet-item--selected" : ""
+                  }${isImportant ? " cue-sheet-item--important" : ""}`}
                 >
-                  <span className="cue-sheet-item__icon" aria-hidden="true">
-                    {getRowIcon(variant)}
-                  </span>
-                  <span className="cue-sheet-item__time">
-                    {formatCueSheetTime(cue.time)}
-                  </span>
-                  <span className="cue-sheet-item__emoji" aria-hidden="true">
-                    {getCueDisplayIcon(cue)}
-                  </span>
-                  <span className="cue-sheet-item__name">
-                    {getCueLabel(cue.text)}
-                  </span>
-                </button>
-
-                {editorMode && (
                   <button
                     type="button"
-                    className="cue-sheet-item__edit"
-                    aria-label={`Edit cue ${getCueLabel(cue.text)}`}
-                    onClick={() => onEditCue(index)}
+                    className="cue-sheet-item__button"
+                    disabled={directorMode}
+                    onClick={() => {
+                      if (editorMode) {
+                        onSelectCue(index);
+                      }
+                      if (!directorMode) {
+                        onCueSeek(cue.time, cue);
+                      }
+                    }}
+                    onDoubleClick={() => {
+                      if (directorMode) return;
+                      onCueSeek(cue.time, cue);
+                    }}
+                    onKeyDown={blockArrowKeyFocusNavigation}
+                    onContextMenu={(event) => {
+                      if (!editorMode) return;
+                      event.preventDefault();
+                      onSelectCue(index);
+                      onCueContextMenu(index, event);
+                    }}
                   >
-                    Edit
+                    <span className="cue-sheet-item__icon" aria-hidden="true">
+                      {getRowIcon(variant)}
+                    </span>
+                    <span className="cue-sheet-item__time">
+                      {formatCueSheetTime(cue.time)}
+                    </span>
+                    <span className="cue-sheet-item__emoji" aria-hidden="true">
+                      {getCueDisplayIcon(cue)}
+                    </span>
+                    <span className="cue-sheet-item__name">
+                      {isImportant && (
+                        <span
+                          className="cue-sheet-item__star"
+                          aria-label="Important cue"
+                        >
+                          ⭐
+                        </span>
+                      )}
+                      {getCueLabel(cue.text)}
+                    </span>
                   </button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+
+                  {editorMode && (
+                    <button
+                      type="button"
+                      className={`cue-sheet-item__important-toggle${
+                        isImportant
+                          ? " cue-sheet-item__important-toggle--active"
+                          : ""
+                      }`}
+                      aria-label={
+                        isImportant
+                          ? `Unmark ${getCueLabel(cue.text)} as important`
+                          : `Mark ${getCueLabel(cue.text)} as important`
+                      }
+                      aria-pressed={isImportant}
+                      onClick={() => onToggleImportant(index)}
+                    >
+                      ⭐
+                    </button>
+                  )}
+
+                  {editorMode && (
+                    <button
+                      type="button"
+                      className="cue-sheet-item__edit"
+                      aria-label={`Edit cue ${getCueLabel(cue.text)}`}
+                      onClick={() => onEditCue(index)}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <ShowTimer />
       </section>
     </aside>
   );
 }
+
+export default memo(CuePanel);

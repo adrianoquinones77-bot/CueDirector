@@ -3,8 +3,17 @@ import {
   loadSongCues,
 } from "../cueFile/loadSongCues";
 import { collectFilesFromDirectory } from "../media/loadMediaDirectory";
+import { createVideoObjectUrl } from "../media/videoObjectUrl";
 import type { CueDirectorFile } from "../types/cueDirectorFile";
+import {
+  makeMediaId,
+  type RuntimeShowMediaItem,
+} from "../types/showMedia";
 import type { Song } from "../types/song";
+import {
+  buildMediaLibraryFromPlaylist,
+  mergeMediaLibraries,
+} from "./mediaLibrary";
 import { logShowRestore } from "./showMediaPaths";
 
 export interface RestoreShowResult {
@@ -12,22 +21,31 @@ export interface RestoreShowResult {
   preferences: CueDirectorFile["preferences"];
   timeline: CueDirectorFile["timeline"];
   playlist: Song[];
+  mediaLibrary: RuntimeShowMediaItem[];
   missingVideoFiles: string[];
 }
 
 function buildVideoFileMaps(files: FileList | File[]): {
   byName: Map<string, File>;
   byRelativePath: Map<string, File>;
+  allVideos: File[];
 } {
   const byName = new Map<string, File>();
   const byRelativePath = new Map<string, File>();
+  const allVideos: File[] = [];
 
   for (const file of Array.from(files)) {
     const extension = file.name.split(".").pop()?.toLowerCase();
-    if (extension !== "mp4" && extension !== "mov" && extension !== "m4v" && !file.type.startsWith("video/")) {
+    if (
+      extension !== "mp4" &&
+      extension !== "mov" &&
+      extension !== "m4v" &&
+      !file.type.startsWith("video/")
+    ) {
       continue;
     }
 
+    allVideos.push(file);
     byName.set(file.name.toLowerCase(), file);
 
     const relativePath =
@@ -42,21 +60,99 @@ function buildVideoFileMaps(files: FileList | File[]): {
     }
   }
 
-  return { byName, byRelativePath };
+  return { byName, byRelativePath, allVideos };
+}
+
+function mediaLookupKeys(entry: {
+  id?: string;
+  filename?: string;
+  relativePath?: string;
+  videoFilename?: string;
+  videoRelativePath?: string;
+}): { filename: string; relativePath?: string; id?: string } {
+  return {
+    id: entry.id,
+    filename: entry.filename ?? entry.videoFilename ?? "",
+    relativePath: entry.relativePath ?? entry.videoRelativePath,
+  };
 }
 
 function resolveVideoFile(
-  entry: CueDirectorFile["playlist"][number],
+  entry: {
+    filename?: string;
+    relativePath?: string;
+    videoFilename?: string;
+    videoRelativePath?: string;
+  },
   maps: ReturnType<typeof buildVideoFileMaps>,
 ): File | undefined {
-  if (entry.videoRelativePath) {
+  const { filename, relativePath } = mediaLookupKeys(entry);
+
+  if (relativePath) {
     const byPath = maps.byRelativePath.get(
-      entry.videoRelativePath.replace(/\\/g, "/").toLowerCase(),
+      relativePath.replace(/\\/g, "/").toLowerCase(),
     );
     if (byPath) return byPath;
   }
 
-  return maps.byName.get(entry.videoFilename.toLowerCase());
+  if (!filename) return undefined;
+  return maps.byName.get(filename.toLowerCase());
+}
+
+function buildLibraryFromVideoFiles(
+  files: File[],
+): RuntimeShowMediaItem[] {
+  const items: RuntimeShowMediaItem[] = [];
+
+  for (const file of files) {
+    const relativePath =
+      "webkitRelativePath" in file &&
+      typeof file.webkitRelativePath === "string" &&
+      file.webkitRelativePath
+        ? file.webkitRelativePath.replace(/\\/g, "/")
+        : undefined;
+
+    items.push({
+      id: makeMediaId(file.name, relativePath),
+      filename: file.name,
+      relativePath,
+      url: createVideoObjectUrl(file),
+    });
+  }
+
+  return items;
+}
+
+function findLibraryItemForEntry(
+  entry: {
+    id?: string;
+    filename?: string;
+    relativePath?: string;
+    videoFilename?: string;
+    videoRelativePath?: string;
+  },
+  library: RuntimeShowMediaItem[],
+): RuntimeShowMediaItem | undefined {
+  const { id, filename, relativePath } = mediaLookupKeys(entry);
+
+  if (id) {
+    const byId = library.find((item) => item.id === id);
+    if (byId) return byId;
+  }
+
+  if (relativePath) {
+    const byPath = library.find(
+      (item) =>
+        item.relativePath?.replace(/\\/g, "/").toLowerCase() ===
+        relativePath.replace(/\\/g, "/").toLowerCase(),
+    );
+    if (byPath) return byPath;
+  }
+
+  if (!filename) return undefined;
+  return library.find(
+    (item) => item.filename.toLowerCase() === filename.toLowerCase(),
+  );
 }
 
 export async function restoreShowFromFile(
@@ -71,8 +167,10 @@ export async function restoreShowFromFile(
   const missingVideoFiles: string[] = [];
   const playlist: Song[] = [];
 
+  let mediaLibrary = buildLibraryFromVideoFiles(videoMaps.allVideos);
+
   for (const entry of showFile.playlist) {
-    const videoFile = resolveVideoFile(entry, videoMaps);
+    const libraryItem = findLibraryItemForEntry(entry, mediaLibrary);
     const baseNameKey = entry.id.toLowerCase();
     const cues = await loadSongCues({
       csvFile: csvs.get(baseNameKey),
@@ -80,7 +178,7 @@ export async function restoreShowFromFile(
       fallbackCues: entry.cues,
     });
 
-    if (!videoFile) {
+    if (!libraryItem) {
       missingVideoFiles.push(entry.videoFilename);
       playlist.push({
         id: entry.id,
@@ -89,26 +187,63 @@ export async function restoreShowFromFile(
         videoRelativePath: entry.videoRelativePath,
         videoUrl: "",
         cues,
+        ...(entry.link ? { link: entry.link } : {}),
+        ...(entry.setList ? { setList: entry.setList } : {}),
       });
       continue;
     }
 
-    const relativePath =
-      "webkitRelativePath" in videoFile &&
-      typeof videoFile.webkitRelativePath === "string" &&
-      videoFile.webkitRelativePath
-        ? videoFile.webkitRelativePath.replace(/\\/g, "/")
-        : entry.videoRelativePath;
-
     playlist.push({
       id: entry.id,
       title: entry.title,
-      videoFilename: videoFile.name,
-      videoRelativePath: relativePath,
-      videoUrl: URL.createObjectURL(videoFile),
+      videoFilename: libraryItem.filename,
+      videoRelativePath: libraryItem.relativePath ?? entry.videoRelativePath,
+      videoUrl: libraryItem.url,
       cues,
+      ...(entry.link ? { link: entry.link } : {}),
+      ...(entry.setList ? { setList: entry.setList } : {}),
     });
   }
+
+  // Resolve explicitly saved library entries that may use custom ids.
+  for (const saved of showFile.mediaLibrary ?? []) {
+    if (mediaLibrary.some((item) => item.id === saved.id)) continue;
+
+    const file = resolveVideoFile(saved, videoMaps);
+    if (!file) {
+      missingVideoFiles.push(saved.filename);
+      continue;
+    }
+
+    const existing = findLibraryItemForEntry(saved, mediaLibrary);
+    if (existing) {
+      mediaLibrary = mergeMediaLibraries(mediaLibrary, [
+        { ...existing, id: saved.id },
+      ]);
+      continue;
+    }
+
+    const relativePath =
+      "webkitRelativePath" in file &&
+      typeof file.webkitRelativePath === "string" &&
+      file.webkitRelativePath
+        ? file.webkitRelativePath.replace(/\\/g, "/")
+        : saved.relativePath;
+
+    mediaLibrary = mergeMediaLibraries(mediaLibrary, [
+      {
+        id: saved.id,
+        filename: file.name,
+        relativePath,
+        url: createVideoObjectUrl(file),
+      },
+    ]);
+  }
+
+  mediaLibrary = mergeMediaLibraries(
+    mediaLibrary,
+    buildMediaLibraryFromPlaylist(playlist),
+  );
 
   logShowRestore("Missing videos after restore", missingVideoFiles);
 
@@ -117,7 +252,8 @@ export async function restoreShowFromFile(
     preferences: showFile.preferences,
     timeline: showFile.timeline ?? { zoom: 1 },
     playlist,
-    missingVideoFiles,
+    mediaLibrary,
+    missingVideoFiles: [...new Set(missingVideoFiles)],
   };
 }
 

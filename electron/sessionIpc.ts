@@ -146,6 +146,37 @@ export async function pickMediaDirectoryNative(): Promise<string | null> {
   return result.filePaths[0] ?? null;
 }
 
+export async function pickSaveShowPathNative(options?: {
+  defaultPath?: string;
+}): Promise<string | null> {
+  const { dialog, BrowserWindow } = await import("electron");
+  const window = BrowserWindow.getFocusedWindow();
+
+  const dialogOptions = {
+    title: "Save Show As",
+    defaultPath: options?.defaultPath,
+    filters: [
+      { name: "CueDirector Show", extensions: ["show"] },
+      { name: "Legacy CueDirector", extensions: ["cuedirector"] },
+    ],
+  };
+
+  const result = window
+    ? await dialog.showSaveDialog(window, dialogOptions)
+    : await dialog.showSaveDialog(dialogOptions);
+
+  if (result.canceled || !result.filePath) {
+    return null;
+  }
+
+  return result.filePath;
+}
+
 export function registerDialogIpc(): void {
   ipcMain.handle("dialog:pickMediaDirectory", () => pickMediaDirectoryNative());
+  ipcMain.handle(
+    "dialog:pickSaveShowPath",
+    (_event, options?: { defaultPath?: string }) =>
+      pickSaveShowPathNative(options),
+  );
 }

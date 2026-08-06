@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("session:clearPlaybackPosition"),
   pickMediaDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke("dialog:pickMediaDirectory"),
+  pickSaveShowPath: (options?: {
+    defaultPath?: string;
+  }): Promise<string | null> =>
+    ipcRenderer.invoke("dialog:pickSaveShowPath", options),
   collectMediaFromDirectory: (directoryPath: string) =>
     ipcRenderer.invoke("media:collect", directoryPath),
   collectVideosRecursively: (directoryPath: string) =>

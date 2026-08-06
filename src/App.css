@@ -553,12 +553,18 @@ body,
   top: calc(100% + 4px);
   left: 0;
   z-index: 20;
-  min-width: 160px;
+  min-width: 180px;
   padding: 4px;
   border: 1px solid #333;
   border-radius: 8px;
   background: #1d1d1d;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.menu-bar__separator {
+  margin: 4px 8px;
+  border: none;
+  border-top: 1px solid #333;
 }
 
 .menu-bar__item {

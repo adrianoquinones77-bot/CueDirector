@@ -17,6 +17,9 @@ export interface ElectronAPI {
   ) => Promise<void>;
   clearLastShowPlaybackPosition: () => Promise<void>;
   pickMediaDirectory: () => Promise<string | null>;
+  pickSaveShowPath: (options?: {
+    defaultPath?: string;
+  }) => Promise<string | null>;
   collectMediaFromDirectory: (
     directoryPath: string,
   ) => Promise<ElectronMediaFile[]>;

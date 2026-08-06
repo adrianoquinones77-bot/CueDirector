@@ -15,6 +15,7 @@ import {
 import { demoCues } from "../demoCues";
 import {
   buildPlaylistFromDirectory,
+  collectFilesFromDirectory,
   pickMediaDirectory,
 } from "../media/loadMediaDirectory";
 import {
@@ -34,6 +35,10 @@ import {
   resolveCueVideoUrl,
   songFromMediaItem,
 } from "../showFile/mediaLibrary";
+import {
+  applyShowPlaylistMetadata,
+  findShowFileInList,
+} from "../showFile/applyShowPlaylistMetadata";
 import { parseCueDirectorFile } from "../showFile/parseCueDirectorFile";
 import { logShowRestore, deriveMediaDirectoryFromFiles } from "../showFile/showMediaPaths";
 import {
@@ -46,8 +51,16 @@ import {
   restoreShowFromFile,
   type RestoreShowResult,
 } from "../showFile/restoreShowFile";
-import { downloadShowFile, writeShowFileToPath } from "../showFile/saveShowFile";
+import {
+  downloadShowFile,
+  ensureShowFileExtension,
+  getSuggestedShowFilename,
+  writeShowFileToPath,
+  type SaveShowInput,
+} from "../showFile/saveShowFile";
 import type { CueDirectorFile } from "../types/cueDirectorFile";
+
+export type SaveShowResult = "saved" | "cancelled" | "error" | "empty";
 import type { Cue } from "../types/cue";
 import type { LastShowSession } from "../types/lastShowSession";
 import {
@@ -242,90 +255,108 @@ export function useShowDirector() {
     [revokeRuntimeMedia],
   );
 
-  const loadShowDirectory = useCallback(async () => {
-    if (window.electronAPI) {
-      const directoryPath = await window.electronAPI.pickMediaDirectory();
-      if (!directoryPath) return;
-
-      mediaDirectoryPathRef.current = directoryPath;
-      showFilePathRef.current = undefined;
-      mediaDirectoryRef.current = null;
-      cueFileHandlesRef.current.clear();
-      revokePlaylistUrls(playlist);
-
-      const songs = await buildPlaylistFromElectronDirectory(directoryPath);
-      applyLoadedPlaylist(songs);
-      return;
-    }
-
-    const directoryHandle = await pickMediaDirectory();
-    if (!directoryHandle) return;
-
-    mediaDirectoryPathRef.current = undefined;
-    showFilePathRef.current = undefined;
-    mediaDirectoryRef.current = directoryHandle;
-    revokePlaylistUrls(playlist);
-
-    const { songs, cuesFileHandles } =
-      await buildPlaylistFromDirectory(directoryHandle);
-    cueFileHandlesRef.current.replaceAll(cuesFileHandles);
-    applyLoadedPlaylist(songs);
-  }, [applyLoadedPlaylist, playlist]);
-
-  const loadShow = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      const files = event.target.files;
-      if (!files || files.length === 0) return;
-
-      mediaDirectoryRef.current = null;
-      mediaDirectoryPathRef.current = undefined;
-      showFilePathRef.current = undefined;
-      cueFileHandlesRef.current.clear();
-      revokePlaylistUrls(playlist);
-
-      const songs = await buildPlaylistFromFiles(files);
-      applyLoadedPlaylist(songs);
-    },
-    [applyLoadedPlaylist, playlist],
+  const buildSaveInput = useCallback(
+    (timelineZoom: number, nextPlaylist: Song[] = playlist): SaveShowInput => ({
+      showInfo,
+      autoAdvance,
+      defaultCueDuration,
+      timelineZoom,
+      mediaDirectoryPath: mediaDirectoryPathRef.current,
+      mediaLibrary,
+      playlist: nextPlaylist,
+    }),
+    [showInfo, autoAdvance, defaultCueDuration, mediaLibrary, playlist],
   );
 
-  const saveShow = useCallback(
-    (timelineZoom: number): boolean => {
-      if (playlist.length === 0) return false;
+  const defaultSaveAsPath = useCallback(() => {
+    const filename = getSuggestedShowFilename(showInfo);
+    const currentPath = showFilePathRef.current;
+    if (currentPath) {
+      const slash = Math.max(
+        currentPath.lastIndexOf("/"),
+        currentPath.lastIndexOf("\\"),
+      );
+      if (slash >= 0) {
+        return `${currentPath.slice(0, slash + 1)}${filename}`;
+      }
+    }
+    const mediaRoot = mediaDirectoryPathRef.current;
+    if (mediaRoot) {
+      const sep = mediaRoot.includes("\\") ? "\\" : "/";
+      const root = mediaRoot.endsWith("/") || mediaRoot.endsWith("\\")
+        ? mediaRoot
+        : `${mediaRoot}${sep}`;
+      return `${root}${filename}`;
+    }
+    return filename;
+  }, [showInfo]);
+
+  /**
+   * Save As… — always prompt for a new path (Electron) or download (browser).
+   * The chosen path becomes the active project for subsequent Save / ⌘S.
+   */
+  const saveShowAs = useCallback(
+    async (timelineZoom: number): Promise<SaveShowResult> => {
+      if (playlist.length === 0) return "empty";
+
+      const input = buildSaveInput(timelineZoom);
 
       try {
-        downloadShowFile({
-          showInfo,
-          autoAdvance,
-          defaultCueDuration,
-          timelineZoom,
-          mediaDirectoryPath: mediaDirectoryPathRef.current,
-          mediaLibrary,
-          playlist,
-        });
-        return true;
+        if (window.electronAPI?.pickSaveShowPath) {
+          const picked = await window.electronAPI.pickSaveShowPath({
+            defaultPath: defaultSaveAsPath(),
+          });
+          if (!picked) return "cancelled";
+
+          const filePath = ensureShowFileExtension(picked);
+          await writeShowFileToPath(filePath, input);
+          showFilePathRef.current = filePath;
+          return "saved";
+        }
+
+        // Browser: download a complete project copy (path cannot be retained).
+        downloadShowFile(input);
+        return "saved";
       } catch {
-        return false;
+        return "error";
       }
     },
-    [showInfo, autoAdvance, defaultCueDuration, mediaLibrary, playlist],
+    [buildSaveInput, defaultSaveAsPath, playlist.length],
+  );
+
+  /**
+   * Save — overwrite the active project path, or fall through to Save As
+   * when the project has never been saved to disk.
+   */
+  const saveShow = useCallback(
+    async (timelineZoom: number): Promise<SaveShowResult> => {
+      if (playlist.length === 0) return "empty";
+
+      const activePath = showFilePathRef.current;
+      if (activePath && window.electronAPI) {
+        try {
+          await writeShowFileToPath(activePath, buildSaveInput(timelineZoom));
+          return "saved";
+        } catch {
+          return "error";
+        }
+      }
+
+      return saveShowAs(timelineZoom);
+    },
+    [buildSaveInput, playlist.length, saveShowAs],
   );
 
   const persistOpenedShowFile = useCallback(
     async (timelineZoom: number, nextPlaylist: Song[]) => {
       if (!showFilePathRef.current) return;
 
-      await writeShowFileToPath(showFilePathRef.current, {
-        showInfo,
-        autoAdvance,
-        defaultCueDuration,
-        timelineZoom,
-        mediaDirectoryPath: mediaDirectoryPathRef.current,
-        mediaLibrary,
-        playlist: nextPlaylist,
-      });
+      await writeShowFileToPath(
+        showFilePathRef.current,
+        buildSaveInput(timelineZoom, nextPlaylist),
+      );
     },
-    [showInfo, autoAdvance, defaultCueDuration, mediaLibrary],
+    [buildSaveInput],
   );
 
   const updateActiveSongCues = useCallback(
@@ -448,6 +479,147 @@ export function useShowDirector() {
     [revokeRuntimeMedia],
   );
 
+  /**
+   * ControlBar "Load Show": prefer restoring a sibling .show so song links
+   * (and set-list metadata) are rebuilt into playlist state. Media-only scan
+   * is the fallback when no project file is present.
+   */
+  const loadShowDirectory = useCallback(async () => {
+    if (window.electronAPI) {
+      const api = window.electronAPI;
+      const directoryPath = await api.pickMediaDirectory();
+      if (!directoryPath) return;
+
+      mediaDirectoryPathRef.current = directoryPath;
+      mediaDirectoryRef.current = null;
+      cueFileHandlesRef.current.clear();
+      revokePlaylistUrls(playlist);
+
+      const mediaFiles = await api.collectMediaFromDirectory(directoryPath);
+      const showEntry = findShowFileInList(mediaFiles);
+
+      if (showEntry) {
+        try {
+          const showFile = parseCueDirectorFile(
+            await api.readTextFile(showEntry.absolutePath),
+          );
+          showFilePathRef.current = showEntry.absolutePath;
+          const result = await restoreShowFromElectronDirectory(
+            showFile,
+            directoryPath,
+          );
+          applyRestoredShow(result);
+          logShowRestore(
+            "Load Show restored project file with song links",
+            showEntry.absolutePath,
+          );
+          return;
+        } catch (error) {
+          logShowRestore(
+            "Load Show failed to restore .show — falling back to media scan",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+
+      showFilePathRef.current = undefined;
+      const songs = await buildPlaylistFromElectronDirectory(directoryPath);
+      applyLoadedPlaylist(songs);
+      return;
+    }
+
+    const directoryHandle = await pickMediaDirectory();
+    if (!directoryHandle) return;
+
+    mediaDirectoryPathRef.current = undefined;
+    showFilePathRef.current = undefined;
+    mediaDirectoryRef.current = directoryHandle;
+    revokePlaylistUrls(playlist);
+
+    const { files, cuesFileHandles } =
+      await collectFilesFromDirectory(directoryHandle);
+    const showFileBlob = findShowFileInList(files);
+
+    if (showFileBlob) {
+      try {
+        const showFile = parseCueDirectorFile(await showFileBlob.text());
+        const result = await restoreShowFromDirectory(
+          showFile,
+          directoryHandle,
+        );
+        cueFileHandlesRef.current.replaceAll(result.cuesFileHandles);
+        applyRestoredShow(result);
+        logShowRestore(
+          "Load Show restored project file with song links",
+          showFileBlob.name,
+        );
+        return;
+      } catch (error) {
+        logShowRestore(
+          "Load Show failed to restore .show — falling back to media scan",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+
+    const { songs } = await buildPlaylistFromDirectory(directoryHandle);
+    cueFileHandlesRef.current.replaceAll(cuesFileHandles);
+    applyLoadedPlaylist(songs);
+  }, [applyLoadedPlaylist, applyRestoredShow, playlist]);
+
+  const loadShow = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const files = event.target.files;
+      if (!files || files.length === 0) return;
+
+      mediaDirectoryRef.current = null;
+      mediaDirectoryPathRef.current = undefined;
+      showFilePathRef.current = undefined;
+      cueFileHandlesRef.current.clear();
+      revokePlaylistUrls(playlist);
+
+      const fileList = Array.from(files);
+      const showFileBlob = findShowFileInList(fileList);
+
+      if (showFileBlob) {
+        try {
+          const showFile = parseCueDirectorFile(await showFileBlob.text());
+          const derivedPath = deriveMediaDirectoryFromFiles(files);
+          if (derivedPath) {
+            mediaDirectoryPathRef.current = derivedPath;
+          }
+          const result = await restoreShowFromFile(showFile, files);
+          applyRestoredShow(result);
+          logShowRestore(
+            "Load Show restored project file with song links",
+            showFileBlob.name,
+          );
+          return;
+        } catch (error) {
+          logShowRestore(
+            "Load Show failed to restore .show — merging link metadata",
+            error instanceof Error ? error.message : String(error),
+          );
+          try {
+            const showFile = parseCueDirectorFile(await showFileBlob.text());
+            const songs = applyShowPlaylistMetadata(
+              await buildPlaylistFromFiles(files),
+              showFile,
+            );
+            applyLoadedPlaylist(songs);
+            return;
+          } catch {
+            // Fall through to media-only load.
+          }
+        }
+      }
+
+      const songs = await buildPlaylistFromFiles(files);
+      applyLoadedPlaylist(songs);
+    },
+    [applyLoadedPlaylist, applyRestoredShow, playlist],
+  );
+
   const restoreFromSession = useCallback(
     async (session: LastShowSession): Promise<{ timelineZoom: number } | null> => {
       revokePlaylistUrls(playlist);
@@ -514,6 +686,29 @@ export function useShowDirector() {
     setAutoAdvance(true);
     setDefaultCueDuration(DEFAULT_CUE_DURATION);
     setMissingVideoFiles([]);
+  }, [revokeRuntimeMedia]);
+
+  /** File → New Show — empty untitled project; clears active project path. */
+  const newShow = useCallback(async () => {
+    await clearLastShowSession();
+    revokeRuntimeMedia([], []);
+    mediaDirectoryRef.current = null;
+    mediaDirectoryPathRef.current = undefined;
+    showFilePathRef.current = undefined;
+    cueFileHandlesRef.current.clear();
+    pendingShowRef.current = null;
+    setPlaylist([]);
+    setMediaLibrary([]);
+    setPlaybackVideoUrl(undefined);
+    setActiveSongIndex(-1);
+    setCues([]);
+    setPlaybackTime(0);
+    setShowInfo(defaultShowInfo);
+    setAutoAdvance(true);
+    setDefaultCueDuration(DEFAULT_CUE_DURATION);
+    setMissingVideoFiles([]);
+    setOpenShowError(null);
+    setSaveCueError(null);
   }, [revokeRuntimeMedia]);
 
   const addVideosToLibrary = useCallback(async (): Promise<number> => {
@@ -1172,7 +1367,9 @@ export function useShowDirector() {
     deleteSong,
     loadShow,
     loadShowDirectory,
+    newShow,
     saveShow,
+    saveShowAs,
     saveCues,
     openShowFile,
     tryAutoRestorePendingShow,

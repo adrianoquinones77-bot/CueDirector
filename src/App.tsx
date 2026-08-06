@@ -74,19 +74,22 @@ function App() {
   const [performanceLocked, setPerformanceLocked] = useState(false);
   const [createPinOpen, setCreatePinOpen] = useState(false);
   const [appView, setAppView] = useState<"director" | "setlist">("director");
-  const [showReadyChecklistOpen, setShowReadyChecklistOpen] = useState(false);
-  /** PIN accepted on PerformanceLockScreen should open checklist, not unlock. */
-  const [showReadyAwaitingPin, setShowReadyAwaitingPin] = useState(false);
   /**
-   * After START SHOW — stay locked without showing the PIN card again.
-   * Kept as React state (not only showClock) so hideCard never flashes false.
+   * Show Ready state machine (authenticate once, then stay locked):
+   * IDLE → LOCK_AUTH → READY_CHECKLIST → LIVE_LOCKED
+   * START SHOW must never return to LOCK_AUTH.
    */
-  const [liveLockedMode, setLiveLockedMode] = useState(false);
-  /** Intentional unlock UI via Lock menu — never shown automatically after START SHOW. */
+  const [showReadyPhase, setShowReadyPhase] = useState<
+    "idle" | "lock_auth" | "ready_checklist" | "live_locked"
+  >("idle");
+  /** Intentional unlock UI only — never auto-opened by START SHOW. */
   const [unlockPromptOpen, setUnlockPromptOpen] = useState(false);
   const [lockIntent, setLockIntent] = useState<"lock" | "show-ready" | null>(
     null,
   );
+  const liveLockedMode = showReadyPhase === "live_locked";
+  const showReadyChecklistOpen = showReadyPhase === "ready_checklist";
+  const showReadyAwaitingPin = showReadyPhase === "lock_auth";
   const toastIdRef = useRef(0);
 
   const {
@@ -101,7 +104,9 @@ function App() {
     deleteSong,
     loadShow,
     loadShowDirectory,
+    newShow,
     saveShow,
+    saveShowAs,
     openShowFile,
     tryAutoRestorePendingShow,
     connectMediaPath,
@@ -173,7 +178,8 @@ function App() {
   const handleClearLastShow = useCallback(async () => {
     await clearPersistedShow();
     resetShowClock();
-    setLiveLockedMode(false);
+    setShowReadyPhase("idle");
+    setUnlockPromptOpen(false);
     setTimelineZoom(1);
   }, [clearPersistedShow]);
 
@@ -191,14 +197,43 @@ function App() {
     setToast((current) => (current?.id === id ? null : current));
   }, []);
 
-  const handleSaveShow = useCallback(() => {
-    const saved = saveShow(timelineZoom);
-    if (saved) {
+  const handleSaveShow = useCallback(async () => {
+    const result = await saveShow(timelineZoom);
+    if (result === "saved") {
       showToast("success", "Show saved");
+    } else if (result === "cancelled") {
+      return;
+    } else if (result === "empty") {
+      showToast("error", "Nothing to save");
     } else {
       showToast("error", "Could not save show");
     }
   }, [saveShow, showToast, timelineZoom]);
+
+  const handleSaveShowAs = useCallback(async () => {
+    const result = await saveShowAs(timelineZoom);
+    if (result === "saved") {
+      showToast("success", "Show saved");
+    } else if (result === "cancelled") {
+      return;
+    } else if (result === "empty") {
+      showToast("error", "Nothing to save");
+    } else {
+      showToast("error", "Could not save show");
+    }
+  }, [saveShowAs, showToast, timelineZoom]);
+
+  const handleNewShow = useCallback(async () => {
+    await newShow();
+    resetShowClock();
+    setShowReadyPhase("idle");
+    setUnlockPromptOpen(false);
+    setPerformanceLocked(false);
+    setLockIntent(null);
+    setTimelineZoom(1);
+    setAppView("director");
+    showToast("success", "New show");
+  }, [newShow, showToast]);
 
   const handleSaveCues = useCallback(async () => {
     const saved = await saveCues();
@@ -238,7 +273,8 @@ function App() {
   const handleShowRestored = useCallback(
     (timelineZoom?: number) => {
       resetShowClock();
-      setLiveLockedMode(false);
+      setShowReadyPhase("idle");
+      setUnlockPromptOpen(false);
       applyRestoredTimelineZoom(timelineZoom);
     },
     [applyRestoredTimelineZoom],
@@ -249,7 +285,8 @@ function App() {
       const opened = await openShowFile(file);
       if (opened) {
         resetShowClock();
-        setLiveLockedMode(false);
+        setShowReadyPhase("idle");
+        setUnlockPromptOpen(false);
       }
       return opened;
     },
@@ -631,16 +668,16 @@ function App() {
     setLockIntent(null);
   }, [engagePerformanceLock, performanceLocked]);
 
-  /** Opens the existing Show Ready checklist modal. */
-  const openShowReadyChecklist = useCallback(() => {
-    setShowReadyAwaitingPin(false);
-    setShowReadyChecklistOpen(true);
-  }, []);
-
   const handleShowReady = useCallback(() => {
     setAppView("director");
 
-    if (showReadyChecklistOpen || showReadyAwaitingPin || createPinOpen) {
+    // Already mid-workflow or live — never re-enter LOCK_AUTH.
+    if (
+      showReadyPhase === "lock_auth" ||
+      showReadyPhase === "ready_checklist" ||
+      showReadyPhase === "live_locked" ||
+      createPinOpen
+    ) {
       return;
     }
 
@@ -651,7 +688,9 @@ function App() {
       return;
     }
 
-    setShowReadyAwaitingPin(true);
+    // IDLE → LOCK_AUTH (PIN once)
+    setShowReadyPhase("lock_auth");
+    setUnlockPromptOpen(false);
     if (!performanceLocked) {
       engagePerformanceLock();
     }
@@ -659,8 +698,7 @@ function App() {
     createPinOpen,
     engagePerformanceLock,
     performanceLocked,
-    showReadyAwaitingPin,
-    showReadyChecklistOpen,
+    showReadyPhase,
   ]);
 
   const handleCreatePin = useCallback(
@@ -670,32 +708,33 @@ function App() {
 
       if (lockIntent === "show-ready") {
         setLockIntent(null);
+        // Creating the PIN authenticates this session — skip LOCK_AUTH.
         engagePerformanceLock();
-        openShowReadyChecklist();
+        setUnlockPromptOpen(false);
+        setShowReadyPhase("ready_checklist");
         return;
       }
 
       engagePerformanceLock();
       setLockIntent(null);
     },
-    [engagePerformanceLock, lockIntent, openShowReadyChecklist],
+    [engagePerformanceLock, lockIntent],
   );
 
   const handleUnlockShow = useCallback(() => {
-    // Show Ready: password accepted on Lock Screen → open checklist, stay locked.
-    if (showReadyAwaitingPin) {
+    // LOCK_AUTH → READY_CHECKLIST (stay locked; do not clear the session)
+    if (showReadyPhase === "lock_auth") {
       setUnlockPromptOpen(false);
-      openShowReadyChecklist();
+      setShowReadyPhase("ready_checklist");
       return;
     }
 
-    setShowReadyChecklistOpen(false);
-    setShowReadyAwaitingPin(false);
-    setLiveLockedMode(false);
+    // Full unlock (manual lock or intentional unlock from LIVE_LOCKED)
+    setShowReadyPhase("idle");
     setUnlockPromptOpen(false);
     setLockIntent(null);
     setPerformanceLocked(false);
-  }, [openShowReadyChecklist, showReadyAwaitingPin]);
+  }, [showReadyPhase]);
 
   const handleToggleShortcuts = useCallback(() => {
     setShortcutsOpen((open) => !open);
@@ -705,23 +744,23 @@ function App() {
   const showSessionActive = useShowSessionActive();
 
   const handleStartShow = useCallback(() => {
-    // Locked + Checklist → Locked + Live (transparent blur only). No PIN / lock UI.
-    startShowClock();
-    setLiveLockedMode(true);
+    // READY_CHECKLIST → LIVE_LOCKED only.
+    // Never opens PIN, never resets auth, never sets unlockPromptOpen.
+    setShowReadyPhase("live_locked");
     setUnlockPromptOpen(false);
-    setShowReadyAwaitingPin(false);
-    setShowReadyChecklistOpen(false);
+    setLockIntent(null);
     setAppView("director");
+    startShowClock();
   }, []);
 
   const handleEndShow = useCallback(() => {
     endShowClock();
-    setLiveLockedMode(false);
+    // Keep LIVE_LOCKED session / auth; only stop the timer.
   }, []);
 
   const handleResetShowTimer = useCallback(() => {
     resetShowClock();
-    setLiveLockedMode(false);
+    // Timer reset must not tear down the locked live session or reopen PIN.
   }, []);
 
   const handleToggleAutoAdvance = useCallback(() => {
@@ -766,10 +805,20 @@ function App() {
       exitFullscreen: handleExitFullscreen,
       toggleShortcuts: handleToggleShortcuts,
       lockShow: handleLockShow,
+      saveShow: () => {
+        if (directorMode || !canSaveShow) return;
+        void handleSaveShow();
+      },
+      saveShowAs: () => {
+        if (directorMode || !canSaveShow) return;
+        void handleSaveShowAs();
+      },
     };
   }, [
     performanceLocked,
     liveLockedMode,
+    directorMode,
+    canSaveShow,
     handlePlayPause,
     goToPreviousSong,
     goToNextSong,
@@ -777,6 +826,8 @@ function App() {
     handleExitFullscreen,
     handleToggleShortcuts,
     handleLockShow,
+    handleSaveShow,
+    handleSaveShowAs,
   ]);
 
   // Arrow seeking stays off in Editor Mode; Space transport stays on via shortcuts.
@@ -810,7 +861,9 @@ function App() {
       }`}
     >
       <MenuBar
+        onNewShow={handleNewShow}
         onSaveShow={handleSaveShow}
+        onSaveShowAs={handleSaveShowAs}
         onOpenShowFile={handleOpenShowFile}
         onTryAutoRestorePendingShow={tryAutoRestorePendingShow}
         onConnectMediaPath={connectMediaPath}
@@ -831,8 +884,9 @@ function App() {
         showLive={showLive}
         canResetShowTimer={showSessionActive}
         showReadyActive={
-          showReadyAwaitingPin ||
-          showReadyChecklistOpen ||
+          showReadyPhase === "lock_auth" ||
+          showReadyPhase === "ready_checklist" ||
+          showReadyPhase === "live_locked" ||
           lockIntent === "show-ready"
         }
         workspace={appView}
@@ -1002,14 +1056,16 @@ function App() {
           onCancel={() => {
             setCreatePinOpen(false);
             setLockIntent(null);
-            setShowReadyAwaitingPin(false);
+            if (showReadyPhase === "lock_auth") {
+              setShowReadyPhase("idle");
+            }
           }}
         />
       )}
 
-      {/* PIN entry (Show Ready auth or intentional unlock) — blur + card. */}
+      {/* LOCK_AUTH or intentional unlock — blur + PIN card. */}
       {performanceLocked &&
-        (showReadyAwaitingPin || unlockPromptOpen) && (
+        (showReadyPhase === "lock_auth" || unlockPromptOpen) && (
           <PerformanceLockScreen
             showInfo={lockShowInfo}
             onUnlock={handleUnlockShow}
@@ -1017,9 +1073,9 @@ function App() {
           />
         )}
 
-      {/* Checklist phase — blur only, no card. */}
+      {/* READY_CHECKLIST — blur only, no PIN card. */}
       {performanceLocked &&
-        showReadyChecklistOpen &&
+        showReadyPhase === "ready_checklist" &&
         !unlockPromptOpen && (
           <PerformanceLockScreen
             showInfo={lockShowInfo}
@@ -1028,16 +1084,16 @@ function App() {
           />
         )}
 
-      {/* Live locked — no blur/overlay chrome; click anywhere → unlock dialog. */}
-      {performanceLocked && liveLockedMode && !unlockPromptOpen && (
-        <LiveLockShield onRequestUnlock={() => setUnlockPromptOpen(true)} />
-      )}
-
-      {/* Regular Lock (not Show Ready / not live): unlock card immediately. */}
+      {/* LIVE_LOCKED — invisible shield; never shows PIN unless unlockPromptOpen. */}
       {performanceLocked &&
-        !liveLockedMode &&
-        !showReadyChecklistOpen &&
-        !showReadyAwaitingPin &&
+        showReadyPhase === "live_locked" &&
+        !unlockPromptOpen && (
+          <LiveLockShield onRequestUnlock={() => setUnlockPromptOpen(true)} />
+        )}
+
+      {/* Manual Lock only (not Show Ready workflow): unlock card immediately. */}
+      {performanceLocked &&
+        showReadyPhase === "idle" &&
         !unlockPromptOpen && (
           <PerformanceLockScreen
             showInfo={lockShowInfo}
@@ -1046,7 +1102,7 @@ function App() {
           />
         )}
 
-      {showReadyChecklistOpen && (
+      {showReadyPhase === "ready_checklist" && (
         <ShowReadyChecklistModal onStartShow={handleStartShow} />
       )}
 

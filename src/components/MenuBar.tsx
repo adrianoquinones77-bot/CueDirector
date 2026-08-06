@@ -7,7 +7,9 @@ import {
 export type AppWorkspace = "director" | "setlist";
 
 interface MenuBarProps {
-  onSaveShow: () => void;
+  onNewShow: () => void | Promise<void>;
+  onSaveShow: () => void | Promise<void>;
+  onSaveShowAs: () => void | Promise<void>;
   onOpenShowFile: (file: File) => Promise<boolean>;
   onTryAutoRestorePendingShow: () => Promise<{
     restored: boolean;
@@ -41,7 +43,9 @@ interface MenuBarProps {
 type OpenMenu = "file" | "show" | null;
 
 function MenuBar({
+  onNewShow,
   onSaveShow,
+  onSaveShowAs,
   onOpenShowFile,
   onTryAutoRestorePendingShow,
   onConnectMediaPath,
@@ -83,6 +87,12 @@ function MenuBar({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [openMenu]);
 
+  const handleNewShow = () => {
+    setOpenMenu(null);
+    if (directorMode) return;
+    void onNewShow();
+  };
+
   const handleOpenShow = () => {
     setOpenMenu(null);
     if (directorMode) return;
@@ -92,7 +102,13 @@ function MenuBar({
   const handleSaveShow = () => {
     setOpenMenu(null);
     if (directorMode || !canSaveShow) return;
-    onSaveShow();
+    void onSaveShow();
+  };
+
+  const handleSaveShowAs = () => {
+    setOpenMenu(null);
+    if (directorMode || !canSaveShow) return;
+    void onSaveShowAs();
   };
 
   const handleShowFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -218,10 +234,10 @@ function MenuBar({
               type="button"
               role="menuitem"
               className="menu-bar__item"
-              disabled={directorMode || !canSaveShow}
-              onClick={handleSaveShow}
+              disabled={directorMode}
+              onClick={handleNewShow}
             >
-              Save Show
+              New Show
             </button>
             <button
               type="button"
@@ -230,8 +246,27 @@ function MenuBar({
               disabled={directorMode}
               onClick={handleOpenShow}
             >
-              Open Show
+              Open Show...
             </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="menu-bar__item"
+              disabled={directorMode || !canSaveShow}
+              onClick={handleSaveShow}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="menu-bar__item"
+              disabled={directorMode || !canSaveShow}
+              onClick={handleSaveShowAs}
+            >
+              Save As...
+            </button>
+            <hr className="menu-bar__separator" />
             <button
               type="button"
               role="menuitem"

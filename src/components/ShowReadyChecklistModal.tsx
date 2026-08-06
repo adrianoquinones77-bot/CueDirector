@@ -72,7 +72,15 @@ function ShowReadyChecklistModal({ onStartShow }: ShowReadyChecklistModalProps) 
           type="button"
           className="ready-page__start"
           disabled={!allReady}
-          onClick={onStartShow}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onStartShow();
+          }}
+          onPointerDown={(event) => {
+            // Keep the START SHOW gesture from reaching LiveLockShield.
+            event.stopPropagation();
+          }}
         >
           START SHOW
         </button>

@@ -26,7 +26,7 @@ export interface SaveShowInput {
   playlist: Song[];
 }
 
-function getDownloadFilename(showInfo: ShowInfo): string {
+export function getSuggestedShowFilename(showInfo: ShowInfo): string {
   const base =
     showInfo.showName
       .trim()
@@ -85,9 +85,19 @@ export function downloadShowFile(input: SaveShowInput): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = getDownloadFilename(input.showInfo);
+  anchor.download = getSuggestedShowFilename(input.showInfo);
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+/** Ensure a project path ends with a supported show extension. */
+export function ensureShowFileExtension(filePath: string): string {
+  const trimmed = filePath.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.endsWith(".show") || lower.endsWith(".cuedirector")) {
+    return trimmed;
+  }
+  return `${trimmed}${SHOW_FILE_EXTENSION}`;
 }
 
 export async function writeShowFileToPath(

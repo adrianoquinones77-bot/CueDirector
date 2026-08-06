@@ -7,7 +7,9 @@ export type ShortcutId =
   | "fullscreen"
   | "exitFullscreen"
   | "toggleShortcuts"
-  | "lockShow";
+  | "lockShow"
+  | "saveShow"
+  | "saveShowAs";
 
 export interface ShortcutDefinition {
   id: ShortcutId;
@@ -116,6 +118,30 @@ export const KEYBOARD_SHORTCUTS: ShortcutDefinition[] = [
       (event.metaKey || event.ctrlKey) &&
       !event.altKey &&
       !event.shiftKey,
+    preventDefault: true,
+  },
+  {
+    id: "saveShow",
+    category: "ui",
+    label: "Save",
+    keys: ["⌘/Ctrl", "S"],
+    match: (event) =>
+      event.code === "KeyS" &&
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      !event.shiftKey,
+    preventDefault: true,
+  },
+  {
+    id: "saveShowAs",
+    category: "ui",
+    label: "Save As…",
+    keys: ["⌘/Ctrl", "Shift", "S"],
+    match: (event) =>
+      event.code === "KeyS" &&
+      (event.metaKey || event.ctrlKey) &&
+      event.shiftKey &&
+      !event.altKey,
     preventDefault: true,
   },
 ];

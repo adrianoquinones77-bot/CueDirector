@@ -156,27 +156,27 @@ export interface DisplayShortcut {
 
 export const VIDEO_SEEK_SHORTCUTS: DisplayShortcut[] = [
   {
-    id: "seekForwardCoarse",
+    id: "syncForwardFine",
     category: "playback",
-    label: "Seek forward 1s",
+    label: "Sync +0.20s",
     keys: ["→"],
   },
   {
-    id: "seekBackwardCoarse",
+    id: "syncBackwardFine",
     category: "playback",
-    label: "Seek backward 1s",
+    label: "Sync −0.20s",
     keys: ["←"],
   },
   {
-    id: "seekForwardFine",
+    id: "syncForwardCoarse",
     category: "playback",
-    label: "Seek forward 0.1s",
+    label: "Sync +1.00s",
     keys: ["Shift", "→"],
   },
   {
-    id: "seekBackwardFine",
+    id: "syncBackwardCoarse",
     category: "playback",
-    label: "Seek backward 0.1s",
+    label: "Sync −1.00s",
     keys: ["Shift", "←"],
   },
 ];

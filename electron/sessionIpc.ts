@@ -172,6 +172,30 @@ export async function pickSaveShowPathNative(options?: {
   return result.filePath;
 }
 
+export async function pickOpenCueFileNative(): Promise<string | null> {
+  const { dialog, BrowserWindow } = await import("electron");
+  const window = BrowserWindow.getFocusedWindow();
+
+  const dialogOptions = {
+    title: "Import Cue File",
+    properties: ["openFile" as const],
+    filters: [
+      { name: "CueDirector Cues", extensions: ["cues", "cue"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  };
+
+  const result = window
+    ? await dialog.showOpenDialog(window, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+
+  return result.filePaths[0] ?? null;
+}
+
 export function registerDialogIpc(): void {
   ipcMain.handle("dialog:pickMediaDirectory", () => pickMediaDirectoryNative());
   ipcMain.handle(
@@ -179,4 +203,5 @@ export function registerDialogIpc(): void {
     (_event, options?: { defaultPath?: string }) =>
       pickSaveShowPathNative(options),
   );
+  ipcMain.handle("dialog:pickOpenCueFile", () => pickOpenCueFileNative());
 }

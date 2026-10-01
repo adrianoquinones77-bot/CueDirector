@@ -4,10 +4,7 @@ import { parseCueCsv } from "../parseCueCsv";
 import type { ElectronMediaFile } from "../types/electron";
 import type { CueDirectorFile } from "../types/cueDirectorFile";
 import type { Cue } from "../types/cue";
-import {
-  makeMediaId,
-  type RuntimeShowMediaItem,
-} from "../types/showMedia";
+import type { RuntimeShowMediaItem } from "../types/showMedia";
 import type { Song } from "../types/song";
 import {
   buildMediaLibraryFromPlaylist,
@@ -256,6 +253,21 @@ export async function restoreShowFromElectronDirectory(
       entry.cues,
     );
 
+    // Manual set-list songs intentionally have no media.
+    if (!entry.videoFilename.trim()) {
+      playlist.push({
+        id: entry.id,
+        title: entry.title,
+        videoFilename: "",
+        videoRelativePath: entry.videoRelativePath,
+        videoUrl: "",
+        cues: songCues,
+        ...(entry.link ? { link: entry.link } : {}),
+        ...(entry.setList ? { setList: entry.setList } : {}),
+      });
+      continue;
+    }
+
     if (!videoFile) {
       logMediaRestore({
         savedPath: showFile.mediaDirectoryPath ?? "(none)",
@@ -316,22 +328,17 @@ export async function restoreShowFromElectronDirectory(
     });
   }
 
-  const libraryFromDisk: RuntimeShowMediaItem[] = [];
-  for (const video of videoFiles) {
-    const relativePath = video.relativePath.replace(/\\/g, "/");
-    libraryFromDisk.push({
-      id: makeMediaId(video.name, relativePath),
-      filename: video.name,
-      relativePath,
-      url: await api.pathToFileUrl(video.absolutePath),
-    });
-  }
+  // Show membership is authoritative. Do NOT dump every video on disk into
+  // mediaLibrary — that reintroduces songs removed from the show (delete + save).
+  // Disk is only used to resolve URLs for playlist / saved library entries.
+  const mediaLibraryMembers: RuntimeShowMediaItem[] = [];
 
   for (const saved of showFile.mediaLibrary ?? []) {
-    if (libraryFromDisk.some((item) => item.id === saved.id)) continue;
     const file =
       (saved.relativePath &&
-        videosByRelativePath.get(saved.relativePath.replace(/\\/g, "/").toLowerCase())) ||
+        videosByRelativePath.get(
+          saved.relativePath.replace(/\\/g, "/").toLowerCase(),
+        )) ||
       videosByFilename.get(saved.filename.toLowerCase());
     if (!file) {
       missingVideoFiles.push(saved.filename);
@@ -342,7 +349,7 @@ export async function restoreShowFromElectronDirectory(
       missingVideoFiles.push(saved.filename);
       continue;
     }
-    libraryFromDisk.push({
+    mediaLibraryMembers.push({
       id: saved.id,
       filename: file.name,
       relativePath: file.relativePath.replace(/\\/g, "/"),
@@ -351,7 +358,7 @@ export async function restoreShowFromElectronDirectory(
   }
 
   const mediaLibrary = mergeMediaLibraries(
-    libraryFromDisk,
+    mediaLibraryMembers,
     buildMediaLibraryFromPlaylist(playlist),
   );
 

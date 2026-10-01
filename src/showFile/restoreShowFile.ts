@@ -28,11 +28,9 @@ export interface RestoreShowResult {
 function buildVideoFileMaps(files: FileList | File[]): {
   byName: Map<string, File>;
   byRelativePath: Map<string, File>;
-  allVideos: File[];
 } {
   const byName = new Map<string, File>();
   const byRelativePath = new Map<string, File>();
-  const allVideos: File[] = [];
 
   for (const file of Array.from(files)) {
     const extension = file.name.split(".").pop()?.toLowerCase();
@@ -45,7 +43,6 @@ function buildVideoFileMaps(files: FileList | File[]): {
       continue;
     }
 
-    allVideos.push(file);
     byName.set(file.name.toLowerCase(), file);
 
     const relativePath =
@@ -60,7 +57,7 @@ function buildVideoFileMaps(files: FileList | File[]): {
     }
   }
 
-  return { byName, byRelativePath, allVideos };
+  return { byName, byRelativePath };
 }
 
 function mediaLookupKeys(entry: {
@@ -99,62 +96,6 @@ function resolveVideoFile(
   return maps.byName.get(filename.toLowerCase());
 }
 
-function buildLibraryFromVideoFiles(
-  files: File[],
-): RuntimeShowMediaItem[] {
-  const items: RuntimeShowMediaItem[] = [];
-
-  for (const file of files) {
-    const relativePath =
-      "webkitRelativePath" in file &&
-      typeof file.webkitRelativePath === "string" &&
-      file.webkitRelativePath
-        ? file.webkitRelativePath.replace(/\\/g, "/")
-        : undefined;
-
-    items.push({
-      id: makeMediaId(file.name, relativePath),
-      filename: file.name,
-      relativePath,
-      url: createVideoObjectUrl(file),
-    });
-  }
-
-  return items;
-}
-
-function findLibraryItemForEntry(
-  entry: {
-    id?: string;
-    filename?: string;
-    relativePath?: string;
-    videoFilename?: string;
-    videoRelativePath?: string;
-  },
-  library: RuntimeShowMediaItem[],
-): RuntimeShowMediaItem | undefined {
-  const { id, filename, relativePath } = mediaLookupKeys(entry);
-
-  if (id) {
-    const byId = library.find((item) => item.id === id);
-    if (byId) return byId;
-  }
-
-  if (relativePath) {
-    const byPath = library.find(
-      (item) =>
-        item.relativePath?.replace(/\\/g, "/").toLowerCase() ===
-        relativePath.replace(/\\/g, "/").toLowerCase(),
-    );
-    if (byPath) return byPath;
-  }
-
-  if (!filename) return undefined;
-  return library.find(
-    (item) => item.filename.toLowerCase() === filename.toLowerCase(),
-  );
-}
-
 export async function restoreShowFromFile(
   showFile: CueDirectorFile,
   mediaFiles: FileList | File[],
@@ -166,17 +107,75 @@ export async function restoreShowFromFile(
   const { csvs, cues: cuesByBaseName } = indexMediaFilesByBaseName(mediaFiles);
   const missingVideoFiles: string[] = [];
   const playlist: Song[] = [];
+  // Cache resolved files so playlist + saved library share object URLs.
+  const resolvedByKey = new Map<string, RuntimeShowMediaItem>();
 
-  let mediaLibrary = buildLibraryFromVideoFiles(videoMaps.allVideos);
+  const resolveMember = (
+    entry: {
+      filename?: string;
+      relativePath?: string;
+      videoFilename?: string;
+      videoRelativePath?: string;
+    },
+    mediaId?: string,
+  ): RuntimeShowMediaItem | undefined => {
+    const file = resolveVideoFile(entry, videoMaps);
+    if (!file) return undefined;
+
+    const { relativePath: entryPath } = mediaLookupKeys(entry);
+    const relativePath =
+      "webkitRelativePath" in file &&
+      typeof file.webkitRelativePath === "string" &&
+      file.webkitRelativePath
+        ? file.webkitRelativePath.replace(/\\/g, "/")
+        : entryPath;
+    const fileId = makeMediaId(file.name, relativePath);
+    const id = mediaId || fileId;
+
+    const cached = resolvedByKey.get(id) ?? resolvedByKey.get(fileId);
+    if (cached) {
+      const item =
+        cached.id === id ? cached : { ...cached, id };
+      resolvedByKey.set(id, item);
+      resolvedByKey.set(fileId, item);
+      return item;
+    }
+
+    const item: RuntimeShowMediaItem = {
+      id,
+      filename: file.name,
+      relativePath,
+      url: createVideoObjectUrl(file),
+    };
+    resolvedByKey.set(id, item);
+    resolvedByKey.set(fileId, item);
+    return item;
+  };
 
   for (const entry of showFile.playlist) {
-    const libraryItem = findLibraryItemForEntry(entry, mediaLibrary);
     const baseNameKey = entry.id.toLowerCase();
     const cues = await loadSongCues({
       csvFile: csvs.get(baseNameKey),
       cuesFile: cuesByBaseName.get(baseNameKey),
       fallbackCues: entry.cues,
     });
+
+    // Manual set-list songs intentionally have no media.
+    if (!entry.videoFilename.trim()) {
+      playlist.push({
+        id: entry.id,
+        title: entry.title,
+        videoFilename: "",
+        videoRelativePath: entry.videoRelativePath,
+        videoUrl: "",
+        cues,
+        ...(entry.link ? { link: entry.link } : {}),
+        ...(entry.setList ? { setList: entry.setList } : {}),
+      });
+      continue;
+    }
+
+    const libraryItem = resolveMember(entry);
 
     if (!libraryItem) {
       missingVideoFiles.push(entry.videoFilename);
@@ -205,43 +204,20 @@ export async function restoreShowFromFile(
     });
   }
 
-  // Resolve explicitly saved library entries that may use custom ids.
+  // Show membership is authoritative — only playlist + saved mediaLibrary.
+  // Importing every file from the media folder reintroduces deleted songs.
+  const mediaLibraryMembers: RuntimeShowMediaItem[] = [];
   for (const saved of showFile.mediaLibrary ?? []) {
-    if (mediaLibrary.some((item) => item.id === saved.id)) continue;
-
-    const file = resolveVideoFile(saved, videoMaps);
-    if (!file) {
+    const item = resolveMember(saved, saved.id);
+    if (!item) {
       missingVideoFiles.push(saved.filename);
       continue;
     }
-
-    const existing = findLibraryItemForEntry(saved, mediaLibrary);
-    if (existing) {
-      mediaLibrary = mergeMediaLibraries(mediaLibrary, [
-        { ...existing, id: saved.id },
-      ]);
-      continue;
-    }
-
-    const relativePath =
-      "webkitRelativePath" in file &&
-      typeof file.webkitRelativePath === "string" &&
-      file.webkitRelativePath
-        ? file.webkitRelativePath.replace(/\\/g, "/")
-        : saved.relativePath;
-
-    mediaLibrary = mergeMediaLibraries(mediaLibrary, [
-      {
-        id: saved.id,
-        filename: file.name,
-        relativePath,
-        url: createVideoObjectUrl(file),
-      },
-    ]);
+    mediaLibraryMembers.push(item);
   }
 
-  mediaLibrary = mergeMediaLibraries(
-    mediaLibrary,
+  const mediaLibrary = mergeMediaLibraries(
+    mediaLibraryMembers,
     buildMediaLibraryFromPlaylist(playlist),
   );
 

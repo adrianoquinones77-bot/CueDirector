@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     defaultPath?: string;
   }): Promise<string | null> =>
     ipcRenderer.invoke("dialog:pickSaveShowPath", options),
+  pickOpenCueFile: (): Promise<string | null> =>
+    ipcRenderer.invoke("dialog:pickOpenCueFile"),
   collectMediaFromDirectory: (directoryPath: string) =>
     ipcRenderer.invoke("media:collect", directoryPath),
   collectVideosRecursively: (directoryPath: string) =>

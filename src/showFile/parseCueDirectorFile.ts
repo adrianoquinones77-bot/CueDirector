@@ -52,6 +52,7 @@ function parseSongSetList(value: unknown): SongSetList | undefined {
     durationSec:
       typeof value.durationSec === "number" ? value.durationSec : undefined,
     parts,
+    notes: typeof value.notes === "string" ? value.notes : undefined,
   });
 }
 
@@ -160,7 +161,8 @@ function parseSong(value: unknown): CueDirectorSong | null {
       ? value.videoRelativePath.replace(/\\/g, "/")
       : undefined;
 
-  if (!id || !title || !videoFilename) return null;
+  // Manual set-list songs may have no media yet (empty videoFilename).
+  if (!id || !title) return null;
 
   const cues: Cue[] = [];
   if (Array.isArray(value.cues)) {

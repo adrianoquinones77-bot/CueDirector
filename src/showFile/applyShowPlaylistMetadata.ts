@@ -14,7 +14,8 @@ export function findShowFileInList<T extends { name: string }>(
 
 /**
  * Re-apply persisted playlist metadata (links, set list) onto media-built songs.
- * Prefers show-file order, then appends any media-only songs.
+ * Show-file playlist order and membership are authoritative — media-only songs
+ * that are not in the project are not appended (delete + save must stick).
  * Match by song id first, then by video filename. Does not change save format.
  */
 export function applyShowPlaylistMetadata(
@@ -43,11 +44,6 @@ export function applyShowPlaylistMetadata(
 
     merged.push(withShowEntryMetadata(song, entry));
     used.add(song.id);
-  }
-
-  for (const song of songs) {
-    if (used.has(song.id)) continue;
-    merged.push(song);
   }
 
   return merged;

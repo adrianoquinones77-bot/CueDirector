@@ -20,6 +20,7 @@ export interface ElectronAPI {
   pickSaveShowPath: (options?: {
     defaultPath?: string;
   }) => Promise<string | null>;
+  pickOpenCueFile: () => Promise<string | null>;
   collectMediaFromDirectory: (
     directoryPath: string,
   ) => Promise<ElectronMediaFile[]>;

@@ -7,6 +7,10 @@ import {
 } from "../buildPlaylist";
 import { createCueFileHandleRegistry } from "../cueFile/cueFileHandleRegistry";
 import {
+  resolveImportedCues,
+  type ImportCueMode,
+} from "../cueFile/importSongCues";
+import {
   createSongCueFile,
   downloadSongCueFile,
   getSaveCueErrorMessage,
@@ -70,8 +74,31 @@ import {
 import { defaultShowInfo, type ShowInfo } from "../types/showInfo";
 import type { AdvanceOnEndResult, Song } from "../types/song";
 import type { SongLink } from "../types/songLink";
-import type { SongSetList } from "../types/songSetList";
+import {
+  normalizeSongSetList,
+  type SongSetList,
+} from "../types/songSetList";
 import { DEFAULT_CUE_DURATION } from "../utils/cueTiming";
+import {
+  moveSongInPlaylist,
+  moveSongToShowPosition,
+} from "../utils/reorderPlaylist";
+
+function makeManualSongId(name: string, existingIds: Set<string>): string {
+  const slug =
+    name
+      .trim()
+      .replace(/[^\w\s-]/g, "")
+      .replace(/\s+/g, "_")
+      .slice(0, 40) || "song";
+  let id = `manual_${slug}`;
+  let suffix = 2;
+  while (existingIds.has(id)) {
+    id = `manual_${slug}_${suffix}`;
+    suffix += 1;
+  }
+  return id;
+}
 
 function sortCues(cues: Cue[]): Cue[] {
   return [...cues].sort((a, b) => a.time - b.time);
@@ -1097,6 +1124,62 @@ export function useShowDirector() {
    * Remove a song from the show playlist (cues + links). Editor Mode only.
    * Does not delete media files on disk.
    */
+  /**
+   * Reorder the show playlist only. Song identity and all song data
+   * (cues, links, set list, important flags) are preserved.
+   */
+  const reorderPlaylist = useCallback(
+    (fromIndex: number, toIndex: number): boolean => {
+      const current = playlistRef.current;
+      const next = moveSongInPlaylist(current, fromIndex, toIndex);
+      if (next === current) return false;
+
+      const activeId =
+        activeSongIndex >= 0 ? current[activeSongIndex]?.id : undefined;
+
+      playlistRef.current = next;
+      setPlaylist(next);
+
+      if (activeId) {
+        const nextActive = next.findIndex((song) => song.id === activeId);
+        if (nextActive >= 0 && nextActive !== activeSongIndex) {
+          setActiveSongIndex(nextActive);
+        }
+      }
+
+      return true;
+    },
+    [activeSongIndex],
+  );
+
+  /** Move a song to a 1-based show position (Set List number). */
+  const moveSongToPosition = useCallback(
+    (songId: string, position: number): boolean => {
+      const current = playlistRef.current;
+      const fromIndex = current.findIndex((song) => song.id === songId);
+      if (fromIndex < 0) return false;
+
+      const next = moveSongToShowPosition(current, fromIndex, position);
+      if (next === current) return false;
+
+      const activeId =
+        activeSongIndex >= 0 ? current[activeSongIndex]?.id : undefined;
+
+      playlistRef.current = next;
+      setPlaylist(next);
+
+      if (activeId) {
+        const nextActive = next.findIndex((song) => song.id === activeId);
+        if (nextActive >= 0 && nextActive !== activeSongIndex) {
+          setActiveSongIndex(nextActive);
+        }
+      }
+
+      return true;
+    },
+    [activeSongIndex],
+  );
+
   const deleteSong = useCallback(
     (songId: string): boolean => {
       if (!editorModeRef.current) return false;
@@ -1230,6 +1313,12 @@ export function useShowDirector() {
             else next.parts = patch.parts;
           }
 
+          if (patch.notes !== undefined) {
+            const trimmed = patch.notes.trim();
+            if (trimmed) next.notes = trimmed;
+            else delete next.notes;
+          }
+
           if (Object.keys(next).length === 0) {
             if (!song.setList) return song;
             const { setList: _removed, ...rest } = song;
@@ -1241,6 +1330,49 @@ export function useShowDirector() {
       );
     },
     [],
+  );
+
+  /**
+   * Add a set-list-only song with no media / cues.
+   * Identity is stable for later reordering and optional video attach.
+   */
+  const addManualSong = useCallback(
+    (songName: string, notes = ""): boolean => {
+      const name = songName.trim();
+      if (!name) return false;
+
+      const existingIds = new Set(
+        playlistRef.current.map((song) => song.id),
+      );
+      const id = makeManualSongId(name, existingIds);
+      const setList = normalizeSongSetList({
+        displayName: name,
+        notes: notes.trim() || undefined,
+      });
+
+      const song: Song = {
+        id,
+        title: name,
+        videoFilename: "",
+        videoUrl: "",
+        cues: [],
+        ...(setList ? { setList } : {}),
+      };
+
+      const nextPlaylist = [...playlistRef.current, song];
+      playlistRef.current = nextPlaylist;
+      setPlaylist(nextPlaylist);
+
+      if (activeSongIndex < 0) {
+        setActiveSongIndex(nextPlaylist.length - 1);
+        setCues([]);
+        setPlaybackTime(0);
+        setPlaybackVideoUrl(undefined);
+      }
+
+      return true;
+    },
+    [activeSongIndex],
   );
 
   /** Cache active song duration for Set List display when the player reports it. */
@@ -1339,6 +1471,48 @@ export function useShowDirector() {
     [applyActiveSongCues],
   );
 
+  /**
+   * Import cues into an existing playlist song. Does not create or duplicate
+   * songs — only the cues array on that song entry is updated.
+   */
+  const importSongCues = useCallback(
+    (songId: string, imported: Cue[], mode: ImportCueMode): boolean => {
+      const current = playlistRef.current;
+      const index = current.findIndex((song) => song.id === songId);
+      if (index < 0) return false;
+
+      const song = current[index];
+      if (!song) return false;
+
+      const nextCues = sortCues(
+        resolveImportedCues(song.cues, imported, mode),
+      );
+
+      const nextPlaylist = current.map((entry, entryIndex) =>
+        entryIndex === index ? { ...entry, cues: nextCues } : entry,
+      );
+
+      playlistRef.current = nextPlaylist;
+      setPlaylist(nextPlaylist);
+
+      if (index === activeSongIndex) {
+        setCues(nextCues);
+      }
+
+      const handle = cueFileHandlesRef.current.get(songId);
+      if (handle) {
+        void updateSongCueFile({ ...song, cues: nextCues }, handle).catch(
+          (error) => {
+            setSaveCueError(getSaveCueErrorMessage(error));
+          },
+        );
+      }
+
+      return true;
+    },
+    [activeSongIndex],
+  );
+
   return {
     cues,
     playlist,
@@ -1348,6 +1522,7 @@ export function useShowDirector() {
     showInfo,
     updateShowInfo,
     updateSongSetList,
+    addManualSong,
     recordActiveSongDuration,
     autoAdvance,
     setAutoAdvance,
@@ -1358,12 +1533,15 @@ export function useShowDirector() {
     addCue,
     updateCue,
     deleteCue,
+    importSongCues,
     defaultCueDuration,
     setDefaultCueDuration,
     selectSong,
     selectMedia,
     linkSongs,
     breakSongLink,
+    reorderPlaylist,
+    moveSongToPosition,
     deleteSong,
     loadShow,
     loadShowDirectory,

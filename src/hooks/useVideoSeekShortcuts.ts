@@ -3,8 +3,8 @@ import { getVideoSeekDelta } from "../utils/videoSeek";
 import { isTextEditingTarget } from "./useKeyboardShortcuts";
 
 /**
- * Live-mode arrow key video seeking. Runs in capture phase so cue list / button
- * focus navigation never intercepts arrow keys first.
+ * Live-mode arrow key sync nudges (seek playback without editing cues).
+ * Runs in capture phase so cue list / button focus never intercepts first.
  */
 export function useVideoSeekShortcuts(
   enabled: boolean,

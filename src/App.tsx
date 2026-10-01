@@ -10,6 +10,7 @@ import CuePanel from "./components/CuePanel";
 import CueTimeline from "./components/CueTimeline";
 import EditCueModal from "./components/EditCueModal";
 import Header from "./components/Header";
+import ImportCuesConflictDialog from "./components/ImportCuesConflictDialog";
 import MenuBar from "./components/MenuBar";
 import MissingFilesDialog from "./components/MissingFilesDialog";
 import OpenShowErrorDialog from "./components/OpenShowErrorDialog";
@@ -17,12 +18,18 @@ import LiveLockShield from "./components/LiveLockShield";
 import PerformanceLockScreen from "./components/PerformanceLockScreen";
 import PlaylistPanel from "./components/PlaylistPanel";
 import ResizeHandle from "./components/ResizeHandle";
+import AddManualSongDialog from "./components/AddManualSongDialog";
 import SetListPage from "./components/SetListPage";
 import ShowReadyChecklistModal from "./components/ShowReadyChecklistModal";
+import SongContextMenu from "./components/SongContextMenu";
+import SyncOffsetOverlay from "./components/SyncOffsetOverlay";
 import Toast, { type ToastMessage } from "./components/Toast";
+import { parseImportedCueFile } from "./cueFile/importSongCues";
+import { pickAndReadCueFileContent } from "./cueFile/pickCueFile";
 import VideoPlayer, {
   type VideoPlayerHandle,
 } from "./components/VideoPlayer.tsx";
+import { accumulateSyncOffset } from "./utils/videoSeek";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useLastShowPersistence } from "./hooks/useLastShowPersistence";
 import { useVideoSeekShortcuts } from "./hooks/useVideoSeekShortcuts";
@@ -61,16 +68,31 @@ function App() {
   const [selectedCueIndex, setSelectedCueIndex] = useState<number | null>(null);
   const [deleteCueIndex, setDeleteCueIndex] = useState<number | null>(null);
   const [deleteSongId, setDeleteSongId] = useState<string | null>(null);
+  const [addManualSongOpen, setAddManualSongOpen] = useState(false);
   const [cueContextMenu, setCueContextMenu] = useState<{
     x: number;
     y: number;
     cueIndex: number;
+  } | null>(null);
+  const [songContextMenu, setSongContextMenu] = useState<{
+    x: number;
+    y: number;
+    songId: string;
+  } | null>(null);
+  const [pendingCueImport, setPendingCueImport] = useState<{
+    songId: string;
+    songTitle: string;
+    existingCount: number;
+    cues: Cue[];
   } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [isRelinkingMedia, setIsRelinkingMedia] = useState(false);
   const [videoDuration, setVideoDuration] = useState(0);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+  /** Live sync nudge total for the active song only — never edits cue times. */
+  const [syncOffsetSec, setSyncOffsetSec] = useState(0);
+  const [syncOffsetFlash, setSyncOffsetFlash] = useState(0);
   const [performanceLocked, setPerformanceLocked] = useState(false);
   const [createPinOpen, setCreatePinOpen] = useState(false);
   const [appView, setAppView] = useState<"director" | "setlist">("director");
@@ -135,11 +157,15 @@ function App() {
     addCue,
     updateCue,
     deleteCue,
+    importSongCues,
     defaultCueDuration,
     setDefaultCueDuration,
     showInfo,
     updateShowInfo,
     updateSongSetList,
+    reorderPlaylist,
+    moveSongToPosition,
+    addManualSong,
     recordActiveSongDuration,
     canGoPrevious,
     canGoNext,
@@ -518,6 +544,7 @@ function App() {
     (index: number, event: MouseEvent) => {
       if (!editorMode) return;
 
+      setSongContextMenu(null);
       setCueContextMenu({
         x: event.clientX,
         y: event.clientY,
@@ -571,6 +598,79 @@ function App() {
   const handleCancelDeleteSong = useCallback(() => {
     setDeleteSongId(null);
   }, []);
+
+  const handleSongContextMenu = useCallback(
+    (songId: string, event: MouseEvent) => {
+      if (!editorMode || directorMode || performanceLocked) return;
+      setCueContextMenu(null);
+      setSongContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        songId,
+      });
+    },
+    [directorMode, editorMode, performanceLocked],
+  );
+
+  const applyImportedCues = useCallback(
+    (songId: string, cuesToImport: Cue[], mode: "replace" | "merge") => {
+      const ok = importSongCues(songId, cuesToImport, mode);
+      if (!ok) {
+        showToast("error", "Could not import cues");
+        return;
+      }
+      showToast(
+        "success",
+        mode === "merge" ? "Cues merged" : "Cues imported",
+      );
+    },
+    [importSongCues, showToast],
+  );
+
+  const handleImportCueFileForSong = useCallback(
+    async (songId: string) => {
+      if (!editorMode || directorMode || performanceLocked) return;
+
+      const song = playlist.find((entry) => entry.id === songId);
+      if (!song) return;
+
+      try {
+        const content = await pickAndReadCueFileContent();
+        if (content === null) return;
+
+        const imported = parseImportedCueFile(content);
+        if (imported.length === 0) {
+          showToast("error", "Cue file contains no cues");
+          return;
+        }
+
+        if (song.cues.length > 0) {
+          setPendingCueImport({
+            songId,
+            songTitle: song.title || song.videoFilename || "Song",
+            existingCount: song.cues.length,
+            cues: imported,
+          });
+          return;
+        }
+
+        applyImportedCues(songId, imported, "replace");
+      } catch (error) {
+        showToast(
+          "error",
+          error instanceof Error ? error.message : "Could not import cue file",
+        );
+      }
+    },
+    [
+      applyImportedCues,
+      directorMode,
+      editorMode,
+      performanceLocked,
+      playlist,
+      showToast,
+    ],
+  );
 
   const handleSaveEditedCue = useCallback(
     (cue: Cue) => {
@@ -637,8 +737,16 @@ function App() {
     const player = videoPlayerRef.current;
     if (!player) return;
 
+    // Instant playback nudge only — cue timestamps stay untouched.
     player.seekTo(player.getCurrentTime() + delta);
+    setSyncOffsetSec((previous) => accumulateSyncOffset(previous, delta));
+    setSyncOffsetFlash((token) => token + 1);
   }, []);
+
+  useEffect(() => {
+    setSyncOffsetSec(0);
+    setSyncOffsetFlash(0);
+  }, [activeSongIndex]);
 
   const engagePerformanceLock = useCallback(() => {
     videoPlayerRef.current?.pause();
@@ -923,6 +1031,13 @@ function App() {
             onLinkSongs={linkSongs}
             onBreakSongLink={breakSongLink}
             onRequestDeleteSong={handleRequestDeleteSong}
+            onReorderPlaylist={reorderPlaylist}
+            onDisplayNameChange={handleSetListDisplayNameChange}
+            onSongContextMenu={
+              editorMode && !directorMode && !performanceLocked
+                ? handleSongContextMenu
+                : undefined
+            }
             directorMode={directorMode}
             editorMode={editorMode}
             width={panelLayout.playlistWidth}
@@ -1010,18 +1125,35 @@ function App() {
       </div>
 
       {appView === "setlist" && (
-        <main className="content content--set-list">
-          <SetListPage
-            showInfo={showInfo}
-            playlist={playlist}
-            activeSongIndex={activeSongIndex}
-            showCompletion={!editorMode}
-            onShowInfoChange={updateShowInfo}
-            onDisplayNameChange={handleSetListDisplayNameChange}
-            onMedleyPartsChange={handleSetListMedleyPartsChange}
-            readOnly={performanceLocked}
-          />
-        </main>
+        <div className="app-view app-view--set-list">
+          <main className="content content--set-list">
+            <SetListPage
+              showInfo={showInfo}
+              playlist={playlist}
+              activeSongIndex={activeSongIndex}
+              showCompletion={!editorMode}
+              onShowInfoChange={updateShowInfo}
+              onDisplayNameChange={handleSetListDisplayNameChange}
+              onMedleyPartsChange={handleSetListMedleyPartsChange}
+              onReorderPlaylist={reorderPlaylist}
+              onMoveSongToPosition={moveSongToPosition}
+              onAddManualSong={() => setAddManualSongOpen(true)}
+              readOnly={performanceLocked}
+            />
+          </main>
+        </div>
+      )}
+
+      {addManualSongOpen && !performanceLocked && (
+        <AddManualSongDialog
+          onSave={(songName, notes) => {
+            if (addManualSong(songName, notes)) {
+              setAddManualSongOpen(false);
+              showToast("success", "Song added to set list");
+            }
+          }}
+          onCancel={() => setAddManualSongOpen(false)}
+        />
       )}
 
       {missingVideoFiles.length > 0 && (
@@ -1049,6 +1181,13 @@ function App() {
       )}
 
       <Toast toast={toast} onDismiss={dismissToast} />
+
+      {!editorMode && (
+        <SyncOffsetOverlay
+          offsetSec={syncOffsetSec}
+          flashToken={syncOffsetFlash}
+        />
+      )}
 
       {createPinOpen && (
         <CreatePinDialog
@@ -1152,6 +1291,42 @@ function App() {
           onEdit={() => handleEditCue(cueContextMenu.cueIndex)}
           onDelete={() => handleRequestDeleteCue(cueContextMenu.cueIndex)}
           onClose={() => setCueContextMenu(null)}
+        />
+      )}
+
+      {editorMode && songContextMenu && (
+        <SongContextMenu
+          x={songContextMenu.x}
+          y={songContextMenu.y}
+          onImportCueFile={() => {
+            void handleImportCueFileForSong(songContextMenu.songId);
+          }}
+          onClose={() => setSongContextMenu(null)}
+        />
+      )}
+
+      {editorMode && pendingCueImport && (
+        <ImportCuesConflictDialog
+          songTitle={pendingCueImport.songTitle}
+          existingCount={pendingCueImport.existingCount}
+          importedCount={pendingCueImport.cues.length}
+          onReplace={() => {
+            applyImportedCues(
+              pendingCueImport.songId,
+              pendingCueImport.cues,
+              "replace",
+            );
+            setPendingCueImport(null);
+          }}
+          onMerge={() => {
+            applyImportedCues(
+              pendingCueImport.songId,
+              pendingCueImport.cues,
+              "merge",
+            );
+            setPendingCueImport(null);
+          }}
+          onCancel={() => setPendingCueImport(null)}
         />
       )}
     </div>

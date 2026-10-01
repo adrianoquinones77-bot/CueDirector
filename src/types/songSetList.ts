@@ -9,6 +9,8 @@ export interface SongSetList {
    * Playback still uses the single linked media file.
    */
   parts?: string[];
+  /** Freeform operator notes (manual songs, reminders, etc.). */
+  notes?: string;
 }
 
 export function getSongDisplayName(song: {
@@ -55,11 +57,21 @@ export function normalizeSongSetList(
   const parts = Array.isArray(value.parts)
     ? value.parts.map((part) => part.trim()).filter(Boolean)
     : undefined;
+  const notes = value.notes?.trim();
 
   const next: SongSetList = {};
   if (displayName) next.displayName = displayName;
   if (durationSec !== undefined) next.durationSec = durationSec;
   if (parts && parts.length > 0) next.parts = parts;
+  if (notes) next.notes = notes;
 
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+/** True when the song has linked video media. */
+export function songHasMedia(song: {
+  videoFilename?: string;
+  videoUrl?: string;
+}): boolean {
+  return Boolean(song.videoFilename?.trim());
 }

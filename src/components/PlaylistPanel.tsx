@@ -2,11 +2,16 @@ import {
   memo,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
+  type DragEvent,
+  type KeyboardEvent,
+  type MouseEvent,
 } from "react";
 import type { RuntimeShowMediaItem } from "../types/showMedia";
 import type { Song } from "../types/song";
+import { getSongDisplayName } from "../types/songSetList";
 import {
   mediaIdForSong,
   orderMediaItemsByPlaylist,
@@ -29,6 +34,11 @@ interface PlaylistPanelProps {
   onLinkSongs: (songIds: string[]) => boolean;
   onBreakSongLink: (songId: string) => boolean;
   onRequestDeleteSong: (songId: string) => void;
+  /** Reorder by playlist index only — must not recreate song objects. */
+  onReorderPlaylist: (fromIndex: number, toIndex: number) => void;
+  /** Operator display name (setList.displayName) — does not rename media. */
+  onDisplayNameChange: (songId: string, displayName: string) => void;
+  onSongContextMenu?: (songId: string, event: MouseEvent) => void;
   directorMode: boolean;
   /** From useShowDirector — Song Linking edit UI mounts only when true. */
   editorMode: boolean;
@@ -134,10 +144,6 @@ function resolveSongForMediaItem(
   );
 }
 
-function songDisplayName(song: Song): string {
-  return song.title || song.videoFilename;
-}
-
 function linkTooltipForSong(
   song: Song,
   songsById: Map<string, Song>,
@@ -148,7 +154,7 @@ function linkTooltipForSong(
   const nextSong = songsById.get(nextId);
   if (!nextSong) return "End of Song Link";
 
-  return `Linked to: ${songDisplayName(nextSong)}`;
+  return `Linked to: ${getSongDisplayName(nextSong)}`;
 }
 
 function PlaylistPanel({
@@ -160,17 +166,42 @@ function PlaylistPanel({
   onLinkSongs,
   onBreakSongLink,
   onRequestDeleteSong,
+  onReorderPlaylist,
+  onDisplayNameChange,
+  onSongContextMenu,
   directorMode,
   editorMode,
   width,
 }: PlaylistPanelProps) {
   const [selectedSongIds, setSelectedSongIds] = useState<string[]>([]);
+  const [dragFromIndex, setDragFromIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [editingSongId, setEditingSongId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const editingSongIdRef = useRef<string | null>(null);
+
+  const canReorder = editorMode && !directorMode;
+  const canEditTitle = editorMode && !directorMode;
 
   useEffect(() => {
     if (!editorMode) {
       setSelectedSongIds([]);
+      setDragFromIndex(null);
+      setDragOverIndex(null);
+      editingSongIdRef.current = null;
+      setEditingSongId(null);
+      setTitleDraft("");
     }
   }, [editorMode]);
+
+  useEffect(() => {
+    if (!editingSongId) return;
+    const input = titleInputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, [editingSongId]);
 
   useEffect(() => {
     const playlistIds = new Set(playlist.map((song) => song.id));
@@ -245,6 +276,86 @@ function PlaylistPanel({
     setSelectedSongIds([]);
   };
 
+  const clearDragState = () => {
+    setDragFromIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragStart =
+    (playlistIndex: number) => (event: DragEvent) => {
+      if (!canReorder) {
+        event.preventDefault();
+        return;
+      }
+      setDragFromIndex(playlistIndex);
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", String(playlistIndex));
+    };
+
+  const handleDragOver =
+    (playlistIndex: number) => (event: DragEvent) => {
+      if (!canReorder || dragFromIndex === null) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      if (dragOverIndex !== playlistIndex) {
+        setDragOverIndex(playlistIndex);
+      }
+    };
+
+  const handleDrop =
+    (playlistIndex: number) => (event: DragEvent) => {
+      event.preventDefault();
+      if (!canReorder) return;
+
+      const from =
+        dragFromIndex ??
+        Number.parseInt(event.dataTransfer.getData("text/plain"), 10);
+
+      clearDragState();
+
+      if (!Number.isFinite(from) || from === playlistIndex) return;
+      onReorderPlaylist(from, playlistIndex);
+    };
+
+  const beginTitleEdit = (song: Song) => {
+    if (!canEditTitle) return;
+    editingSongIdRef.current = song.id;
+    setEditingSongId(song.id);
+    setTitleDraft(getSongDisplayName(song));
+  };
+
+  const cancelTitleEdit = () => {
+    editingSongIdRef.current = null;
+    setEditingSongId(null);
+    setTitleDraft("");
+  };
+
+  const commitTitleEdit = (song: Song) => {
+    if (editingSongIdRef.current !== song.id) return;
+    const next = titleDraft.trim();
+    const current = getSongDisplayName(song);
+    editingSongIdRef.current = null;
+    setEditingSongId(null);
+    setTitleDraft("");
+    if (next === current) return;
+    onDisplayNameChange(song.id, next);
+  };
+
+  const handleTitleKeyDown =
+    (song: Song) => (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        commitTitleEdit(song);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        cancelTitleEdit();
+      }
+    };
+
   return (
     <aside
       className="playlist-panel"
@@ -282,7 +393,8 @@ function PlaylistPanel({
         <p className="playlist-empty">No videos in library</p>
       ) : (
         <ul
-          className={`playlist-list${editorMode ? "" : " playlist-list--live"}`}
+          className={`playlist-list${editorMode ? "" : " playlist-list--live"}${canReorder ? " playlist-list--reorderable" : ""}`}
+          onDragEnd={clearDragState}
         >
           {orderedMediaItems.map((item, index) => {
             const song = resolveSongForMediaItem(
@@ -326,6 +438,28 @@ function PlaylistPanel({
                 ? linkTooltipForSong(song, songsById)
                 : undefined;
             const cueCount = song?.cues.length ?? 0;
+            const displayName = song
+              ? getSongDisplayName(song)
+              : item.filename;
+            const isEditingTitle = Boolean(
+              song && editingSongId === song.id,
+            );
+            const canDragSong =
+              canReorder && playlistIndex !== undefined;
+            const isDragging =
+              playlistIndex !== undefined && dragFromIndex === playlistIndex;
+            const isDropTarget =
+              playlistIndex !== undefined &&
+              dragOverIndex === playlistIndex &&
+              dragFromIndex !== null &&
+              dragFromIndex !== playlistIndex;
+
+            const rowTitle = [
+              linkTooltip,
+              song ? `Media: ${item.filename}` : undefined,
+            ]
+              .filter(Boolean)
+              .join(" · ");
 
             const chainStyle = palette
               ? ({
@@ -341,12 +475,54 @@ function PlaylistPanel({
                 key={item.id}
                 className={`playlist-list__item${
                   connectsToNext ? " playlist-list__item--connects" : ""
-                }${isLinked ? " playlist-list__item--linked" : ""}`}
+                }${isLinked ? " playlist-list__item--linked" : ""}${
+                  isDragging ? " playlist-list__item--dragging" : ""
+                }${isDropTarget ? " playlist-list__item--drop-target" : ""}`}
                 style={chainStyle}
+                onDragOver={
+                  playlistIndex !== undefined
+                    ? handleDragOver(playlistIndex)
+                    : undefined
+                }
+                onDrop={
+                  playlistIndex !== undefined
+                    ? handleDrop(playlistIndex)
+                    : undefined
+                }
               >
                 <div
                   className={`playlist-item-row${isSelected ? " playlist-item-row--selected" : ""}${isLinked ? " playlist-item-row--linked" : ""}`}
+                  onContextMenu={
+                    song && onSongContextMenu
+                      ? (event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onSongContextMenu(song.id, event);
+                        }
+                      : undefined
+                  }
                 >
+                  {canDragSong ? (
+                    <button
+                      type="button"
+                      className="playlist-item__drag"
+                      draggable
+                      aria-label={`Drag to reorder song ${playlistIndex + 1}`}
+                      title="Drag to reorder"
+                      onDragStart={handleDragStart(playlistIndex)}
+                      onDragEnd={clearDragState}
+                    >
+                      <span aria-hidden="true">⋮⋮</span>
+                    </button>
+                  ) : null}
+                  {playlistIndex !== undefined ? (
+                    <span
+                      className="playlist-item__number"
+                      aria-label={`Song ${playlistIndex + 1}`}
+                    >
+                      {playlistIndex + 1}.
+                    </span>
+                  ) : null}
                   {editorMode && (
                     <SongLinkCheckbox
                       checked={isSelected}
@@ -357,27 +533,71 @@ function PlaylistPanel({
                       }}
                     />
                   )}
-                  <button
-                    type="button"
-                    className={`playlist-item${status ? ` playlist-item--${status}` : ""}${isActive ? " active" : ""}${isLinked ? " playlist-item--linked" : ""}`}
-                    disabled={directorMode}
+                  <div
+                    className={`playlist-item${status ? ` playlist-item--${status}` : ""}${isActive ? " active" : ""}${isLinked ? " playlist-item--linked" : ""}${
+                      directorMode ? " playlist-item--disabled" : ""
+                    }`}
+                    role="button"
+                    tabIndex={directorMode ? -1 : 0}
                     aria-current={isActive ? "true" : undefined}
-                    title={linkTooltip}
-                    onClick={() => onSelectMedia(item.id)}
+                    aria-disabled={directorMode || undefined}
+                    title={rowTitle || undefined}
+                    onClick={() => {
+                      if (directorMode || isEditingTitle) return;
+                      onSelectMedia(item.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (directorMode || isEditingTitle) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelectMedia(item.id);
+                      }
+                    }}
                   >
                     <span className="playlist-item__icon" aria-hidden="true">
                       {status ? getSongStatusIcon(status) : "🎥"}
                     </span>
                     <span className="playlist-item__text">
-                      <span className="playlist-item__title">
-                        {item.filename}
-                        {isActive ? (
-                          <span className="playlist-item__active-label">
-                            {" "}
-                            (active)
-                          </span>
-                        ) : null}
-                      </span>
+                      {isEditingTitle && song ? (
+                        <input
+                          ref={titleInputRef}
+                          type="text"
+                          className="playlist-item__title-input"
+                          value={titleDraft}
+                          aria-label="Edit song display name"
+                          onChange={(event) =>
+                            setTitleDraft(event.target.value)
+                          }
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={handleTitleKeyDown(song)}
+                          onBlur={() => commitTitleEdit(song)}
+                        />
+                      ) : (
+                        <span
+                          className={`playlist-item__title${
+                            canEditTitle && song
+                              ? " playlist-item__title--editable"
+                              : ""
+                          }`}
+                          onDoubleClick={
+                            song && canEditTitle
+                              ? (event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  beginTitleEdit(song);
+                                }
+                              : undefined
+                          }
+                        >
+                          {displayName}
+                          {isActive ? (
+                            <span className="playlist-item__active-label">
+                              {" "}
+                              (active)
+                            </span>
+                          ) : null}
+                        </span>
+                      )}
                     </span>
                     <span className="playlist-item__cue-count">
                       {cueCount} {cueCount === 1 ? "cue" : "cues"}
@@ -391,12 +611,12 @@ function PlaylistPanel({
                         🔗
                       </span>
                     ) : null}
-                  </button>
+                  </div>
                   {editorMode && song ? (
                     <button
                       type="button"
                       className="playlist-item__delete"
-                      aria-label={`Delete ${songDisplayName(song)} from show`}
+                      aria-label={`Delete ${getSongDisplayName(song)} from show`}
                       title="Delete Song"
                       onClick={() => onRequestDeleteSong(song.id)}
                     >
